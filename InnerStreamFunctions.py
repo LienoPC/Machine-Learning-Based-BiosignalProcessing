@@ -11,9 +11,9 @@ class BiosignalData(BaseModel):
 def log_to_file(obj, log_file):
     log_file = open(log_file, 'a')
     timestamp = datetime.datetime.now()
-    log_file.write(f"Heart Rate: {obj.heart_rate}; {timestamp}\n")
-    log_file.write(f"PPG: {obj.ppg}; {timestamp}\n")
-    log_file.write(f"GSR: {obj.gsr}; {timestamp}\n")
+    log_file.write(f"Heart Rate: {obj['heart_rate']}; {timestamp}\n")
+    log_file.write(f"PPG: {obj['ppg']}; {timestamp}\n")
+    log_file.write(f"GSR: {obj['gsr']}; {timestamp}\n")
 
 
 def parse_file(filename, num_entries=None):

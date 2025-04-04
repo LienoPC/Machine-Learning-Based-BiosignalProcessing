@@ -19,7 +19,7 @@ log_file = "Log/Stream.txt"
 manager = ConnectionManager()
 
 @websocketApp.websocket("/ws/ss")
-async def sensor_stream(websocket: WebSocket):
+async def sensor_in_stream(websocket: WebSocket):
     """
     App route that manages the WebSocket connection and communication to the biosensors data streaming.
 
@@ -29,23 +29,22 @@ async def sensor_stream(websocket: WebSocket):
     await websocket.accept()
     while True:
         data = await websocket.receive_text()
-        print(f"Raw received data: {data}")
-
         # Deserialize JSON
         try:
             parsed_data = json.loads(data)
 
             heart_rate = parsed_data.get("HeartRate")
             gsr = parsed_data.get("Gsr")
-            psr = parsed_data.get("Ppg")
+            ppg = parsed_data.get("Ppg")
 
-            obj = {heart_rate: heart_rate, gsr: gsr, psr: psr}
-
+            obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg}
+            # Log received data to a text file
             log_to_file(obj, log_file)
-            print(f"Received object: {obj}")
 
         except json.JSONDecodeError as e:
             print(f"JSON decoding error: {e}")
+        except WebSocketDisconnect as e:
+            print("WebSocketDisconnect:", e)
 
 
 
@@ -85,6 +84,7 @@ def advertise_service(service_name: str, stream_id: str, port: int):
         "path": f"/ws/{stream_id}"  # Path for the WebSocket endpoint
     }
 
+    # Return all service information
     info = ServiceInfo(
         type_=service_type,
         name=full_service_name,
@@ -100,7 +100,7 @@ def advertise_service(service_name: str, stream_id: str, port: int):
     return zeroconf, info
 
 def run_server():
-    uvicorn.run(websocketApp, host="0.0.0.0", port=8000)
+    uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
 
 
@@ -112,14 +112,27 @@ if __name__ == "__main__":
     zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
 
     # Start for the first time the discovery of external connection requests to the unity websocket
-    respond_to_discovery()
-    # Test code to mantain the server active
+    respond_to_discovery([info_sensor, info_unity])
+
+    # Test code to maintain the server active
     try:
-        input("Press enter to exit...\n\n")
+        while True:
+            key = input("Insert h to start again the discovery\nany other key to exit...\n\n")
+            if key == "h":
+                respond_to_discovery([info_sensor, info_unity])
+            else:
+                break
+
     finally:
         zeroconf_sensor.unregister_service(info_sensor)
         zeroconf_sensor.close()
         zeroconf_unity.unregister_service(info_unity)
         zeroconf_unity.close()
+        # Terminate server process
+        print("Stopping WebSocket server...")
+        server_process.terminate()
+        server_process.join()
+        print("Closing connection...")
+
 
 
