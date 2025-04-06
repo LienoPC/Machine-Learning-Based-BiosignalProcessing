@@ -36,8 +36,9 @@ async def sensor_in_stream(websocket: WebSocket):
             heart_rate = parsed_data.get("HeartRate")
             gsr = parsed_data.get("Gsr")
             ppg = parsed_data.get("Ppg")
+            sample_rate = parsed_data.get("SampleRate")
 
-            obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg}
+            obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate}
             # Log received data to a text file
             log_to_file(obj, log_file)
 
@@ -119,6 +120,7 @@ if __name__ == "__main__":
         while True:
             key = input("Insert h to start again the discovery\nany other key to exit...\n\n")
             if key == "h":
+                print("M")
                 respond_to_discovery([info_sensor, info_unity])
             else:
                 break

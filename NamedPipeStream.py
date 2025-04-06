@@ -33,6 +33,9 @@ def read_binary_pipe(pipe):
     return msgpack.unpackb(data)  # Deserialize MessagePack
 
 
+
+
+
 def parse_stream_object(obj):
     '''
     PIPE PROTOCOL
@@ -44,7 +47,7 @@ def parse_stream_object(obj):
 
     Data streamed through pipe is received as an array of values
     '''
-    return DataPacket(obj[0], obj[1], obj[2])
+    return DataPacket(obj[0], obj[1], obj[2], obj[3])
 
 
 
