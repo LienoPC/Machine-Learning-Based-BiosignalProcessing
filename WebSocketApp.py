@@ -1,4 +1,6 @@
+import asyncio
 import json
+import multiprocessing
 from multiprocessing import Process
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -7,12 +9,12 @@ from zeroconf import ServiceInfo, Zeroconf
 import socket
 
 from ConnectionManager import ConnectionManager
-from InnerStreamFunctions import log_to_file
+from DataQueueManager import DataQueueManager
+from InnerStreamFunctions import log_to_file, log_to_queue, data_processing_mock
 from UnityStream import stream_mockup, respond_to_discovery
 
 # Websocket application listening and sending data stream
 websocketApp = FastAPI()
-
 # Log File Path
 log_file = "Log/Stream.txt"
 
@@ -40,7 +42,9 @@ async def sensor_in_stream(websocket: WebSocket):
 
             obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate}
             # Log received data to a text file
-            log_to_file(obj, log_file)
+            #log_to_file(obj, log_file)
+            log_to_queue(obj,websocketApp.state.data_manager)
+
 
         except json.JSONDecodeError as e:
             print(f"JSON decoding error: {e}")
@@ -100,21 +104,26 @@ def advertise_service(service_name: str, stream_id: str, port: int):
     print(f"Service '{full_service_name}' advertised at {local_ip}:{port} with properties {properties}")
     return zeroconf, info
 
-def run_server():
+def run_server(shared_queue):
+    websocketApp.state.shared_queue = shared_queue
+    websocketApp.state.data_manager = DataQueueManager(shared_queue)
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
 
 
 if __name__ == "__main__":
-    server_process = Process(target=run_server)
+
+    shared_queue = multiprocessing.Queue()
+
+    server_process = Process(target=run_server, args=(shared_queue,))
     server_process.start()
 
     zeroconf_sensor, info_sensor = advertise_service("sensor_stream", "ss", 8000)
     zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
-
+    dataManager = DataQueueManager(shared_queue)
     # Start for the first time the discovery of external connection requests to the unity websocket
     respond_to_discovery([info_sensor, info_unity])
-
+    model_processing = asyncio.run(data_processing_mock(dataManager))
     # Test code to maintain the server active
     try:
         while True:
@@ -125,6 +134,8 @@ if __name__ == "__main__":
             else:
                 break
 
+        model_processing.join()
+        server_process.join()
     finally:
         zeroconf_sensor.unregister_service(info_sensor)
         zeroconf_sensor.close()
