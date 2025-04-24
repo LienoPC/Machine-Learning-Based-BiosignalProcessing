@@ -236,7 +236,6 @@ async def data_processing_mock(dataManager):
         if read_list != None and len(read_list) > 0:
             log_to_file(read_list[0], log_file="Log/Stream.txt")
 
-        print(f"Read from queue: {read_list}")
         await asyncio.sleep(0.5)
 
 

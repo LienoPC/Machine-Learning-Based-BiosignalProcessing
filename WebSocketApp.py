@@ -1,6 +1,7 @@
 import asyncio
 import json
 import multiprocessing
+import threading
 from multiprocessing import Process
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -43,7 +44,7 @@ async def sensor_in_stream(websocket: WebSocket):
             obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate}
             # Log received data to a text file
             #log_to_file(obj, log_file)
-            log_to_queue(obj,websocketApp.state.data_manager)
+            log_to_queue(obj, websocketApp.state.data_manager)
 
 
         except json.JSONDecodeError as e:
@@ -109,6 +110,9 @@ def run_server(shared_queue):
     websocketApp.state.data_manager = DataQueueManager(shared_queue)
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
+def run_dataprocessing(dataManager):
+    asyncio.run(data_processing_mock(dataManager))
+
 
 
 if __name__ == "__main__":
@@ -122,20 +126,19 @@ if __name__ == "__main__":
     zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
     dataManager = DataQueueManager(shared_queue)
     # Start for the first time the discovery of external connection requests to the unity websocket
-    respond_to_discovery([info_sensor, info_unity])
-    model_processing = asyncio.run(data_processing_mock(dataManager))
+    respond_to_discovery([info_unity])
+    model_processing = Process(target=run_dataprocessing, args=(dataManager,))
+    model_processing.start()
     # Test code to maintain the server active
     try:
         while True:
             key = input("Insert h to start again the discovery\nany other key to exit...\n\n")
             if key == "h":
-                print("M")
-                respond_to_discovery([info_sensor, info_unity])
+                respond_to_discovery([info_unity])
             else:
                 break
 
-        model_processing.join()
-        server_process.join()
+        model_processing.terminate()
     finally:
         zeroconf_sensor.unregister_service(info_sensor)
         zeroconf_sensor.close()

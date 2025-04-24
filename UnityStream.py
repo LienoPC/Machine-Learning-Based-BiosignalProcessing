@@ -1,12 +1,22 @@
 import asyncio
 import json
+import random
 import socket
 
+from zeroconf import ServiceInfo
 
 # Port on which UDP messages for discovery are received
 DISCOVERY_PORT = 37020
 # Port on which WebSocket server is running on
 SERVER_WS_PORT = 8000
+
+def service_info_to_dict(info: ServiceInfo) -> dict:
+    return {
+        "stream":     info.decoded_properties.get("stream"),
+        "path":       info.decoded_properties.get("path"),
+        "ws_port":    info.port,
+    }
+
 
 def respond_to_discovery(service_info, timeout=20):
     """
@@ -33,14 +43,14 @@ def respond_to_discovery(service_info, timeout=20):
         if message.strip() == "DISCOVER_WEBSOCKET":
 
             for info in service_info:
-                response = json.dumps(info)
+                response = json.dumps(service_info_to_dict(info))
                 sock.sendto(response.encode('utf-8'), addr)
                 print(f"Responded to {addr} with: {response}")
 
 
 async def stream_packet(connection_manager, packet):
     await connection_manager.send_data(json.dumps(packet))
-    print(f"Sent: {packet}")
+    #print(f"Sent: {packet}")
 
 
 async def stream_mockup(websocket):
@@ -51,11 +61,19 @@ async def stream_mockup(websocket):
         """
         while True:
             try:
-                data = {
-                    "Test Data": 50,
-                }
+                range = random.uniform(0,1)
+
+                if range > 0.5:
+                    data = {
+                        "Emotion": "Stress",
+                    }
+                else:
+                    data = {
+                        "Emotion": "NotStress",
+                    }
+
                 await stream_packet(websocket, data)
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(1)
 
             except Exception as e:
                 print("Error while sending data:", e)
