@@ -1,5 +1,9 @@
 import multiprocessing.queues
-
+'''
+Class that models the data structure used to excange samples received from the websocket
+and the data preprocessing process that prepares data to be fed to the AI model.
+It is based on a shared queue that can be securely accessed by both server and data process.
+'''
 class DataQueueManager():
 
     def __init__(self, shared_queue):

@@ -1,7 +1,7 @@
 import asyncio
 import datetime
+import random
 import re
-import time
 
 import pandas as pd
 from pydantic import BaseModel
@@ -9,8 +9,10 @@ import os
 import numpy as np
 import scipy.signal as signal
 import cv2
+from scipy.signal import resample_poly
+from scipy.signal import butter
 
-from DataQueueManager import DataQueueManager
+from Server.UnityStream import unity_stream
 
 
 class BiosignalData(BaseModel):
@@ -19,7 +21,7 @@ class BiosignalData(BaseModel):
     ppg: float
     sample_rate: float
 
-def downsample_data(raw_signal, timestamps, output_frequency):
+def downsample_data_timestamps(raw_signal, timestamps, output_frequency):
     """
     Resample a raw biosignal
     :param raw_signal: array of signal samples
@@ -40,94 +42,19 @@ def downsample_data(raw_signal, timestamps, output_frequency):
     df_signal.resample(f"{(float)(1/output_frequency)}s").mean()
     return df_signal
 
-def process_signal_to_spectrogram_images(raw_signal, fs=128, epoch_length_sec=30, overlap=0.5,
-                                         lowfreq=6, highfreq=12, freqbin=1,
-                                         output_size=(64, 64), output_folder='output'):
+
+def resample_signal(x, fs_in, fs_out):
     """
-    Process a raw biosignal into a grayscale spectrogram images
-
-    Parameters:
-      raw_signal: 1D array of signal data
-      fs: Sampling frequency (Hz)
-      epoch_length_sec: Duration of each epoch in seconds
-      overlap: Percentage overlap between epochs (0 to 1)
-      lowfreq: Lower frequency for spectrogram
-      highfreq: Upper frequency for spectrogram
-      freqbin: Frequency resolution (Hz)
-      output_size: Desired output image dimensions (width, height)
-      output_folder: Folder to save the output images
-
-    Returns:
-      List of normalized spectrogram arrays for each window (called epoch).
+    Resample from fs_in to fs_out using polyphase filtering.
     """
-    # Calculate epoch parameters
-    epoch_samples = int(epoch_length_sec * fs)
-    hop = int(epoch_samples * (1 - overlap))
-    total_samples = len(raw_signal)
-    num_epochs = int(np.floor((total_samples - epoch_samples) / hop) + 1)
+    # find integer up/down factors
+    from fractions import Fraction
+    frac = Fraction(fs_out, fs_in).limit_denominator()
+    up, down = frac.numerator, frac.denominator
+    y = resample_poly(x, up, down)
+    return y
 
-    spectrograms = []
 
-    # Frequency vector that defines the sampling rate on the magnitude
-    desired_freqs = np.arange(lowfreq, highfreq + freqbin, freqbin)
-
-    # Process each window
-    for epoch_idx in range(num_epochs):
-        start = epoch_idx * hop
-        end = start + epoch_samples
-        epoch_data = raw_signal[start:end]
-
-        # Compute spectrogram:
-        # Use a window length equal to fs
-        nperseg = fs
-        # Let the function use a default 50% overlap for the STFT
-        f, t, ps = signal.spectrogram(epoch_data, fs=fs, window='hann', nperseg=nperseg, noverlap=None)
-
-        # Select only the frequency bins of interest
-        freq_indices = np.where((f >= lowfreq) & (f <= highfreq))[0]
-        ps_selected = ps[freq_indices, :]
-
-        # Convert power spectral density to dB scale
-        logpower = 10 * np.log10(ps_selected + 1e-10)
-
-        # Flip vertically so that low frequencies appear at the bottom
-        logpower_flipped = np.flipud(logpower)
-        spectrograms.append(logpower_flipped)
-
-    # Stack all spectrograms along a new third axis:
-    # shape = (n_freq_bins, n_time_bins, n_epochs)
-    all_specs = np.stack(spectrograms, axis=2)
-
-    # Compute the grand mean over all epochs
-    grand_mean = np.mean(all_specs, axis=2)
-
-    # Subtract the grand mean from each epoch
-    specs_mean_sub = all_specs - grand_mean[:, :, np.newaxis]
-
-    global_min = np.min(specs_mean_sub)
-    global_max = np.max(specs_mean_sub)
-
-    # Normalize each spectrogram to the [0, 1] range
-    norm_specs = []
-    for i in range(specs_mean_sub.shape[2]):
-        spec = specs_mean_sub[:, :, i]
-        norm_spec = (spec - global_min) / (global_max - global_min)
-        norm_specs.append(norm_spec)
-
-    os.makedirs(output_folder, exist_ok=True)
-
-    # Process each normalized spectrogram:
-    # replicate to 3 channels, resize, and save as an image
-    for i, norm_spec in enumerate(norm_specs):
-        img = np.stack([norm_spec] * 3, axis=-1)
-        # Resize to output_size using nearest neighbor interpolation
-        img_resized = cv2.resize(img, output_size, interpolation=cv2.INTER_NEAREST)
-        img_uint8 = (img_resized * 255).astype(np.uint8)
-
-        filename = os.path.join(output_folder, f"epoch_{i + 1}.jpg")
-        cv2.imwrite(filename, img_uint8)
-
-    return norm_specs
 
 def log_to_file(obj, log_file):
     log_file = open(log_file, 'a')
@@ -230,21 +157,28 @@ def extract_signals_from_filedata(sensor_data_list):
     return gsr_signal, ppg_signal, heart_rate_signal
 
 
-async def data_processing_mock(dataManager):
+
+async def data_processing_mock(dataManager, websocketManager):
     while True:
         read_list = dataManager.read_batch(1)
         if read_list != None and len(read_list) > 0:
-            log_to_file(read_list[0], log_file="Log/Stream.txt")
-
+            log_to_file(read_list[0], log_file="../Log/Stream.txt")
+        await unity_stream(apply_model_mock(read_list), websocketManager)
         await asyncio.sleep(0.5)
 
+def apply_model_mock(signal_window):
+    # ELABORATE SIGNAL WINDOW
+    classification_res = biased_bit(random.random())
+    return classification_res
 
-'''
-sensor_list, timestamps = parse_file(filename="./Log/Stream.txt", target_filename="./Log/BackupStream.txt")
 
-print(f"Sensor list: {sensor_list}")
+def biased_bit(p: float) -> int:
+    """
+    Returns 1 with probability p, 0 with probability (1-p).
+    Mean = p.
+    """
+    return 1 if random.random() < p else 0
 
-gsr_signal, ppg_signal, heart_rate_signal = extract_signals_from_filedata(sensor_list)
 
-print(f"GSR signals{gsr_signal}")
-'''
+
+

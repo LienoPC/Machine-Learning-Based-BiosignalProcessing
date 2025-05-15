@@ -1,7 +1,6 @@
 import asyncio
 import json
 import multiprocessing
-import threading
 from multiprocessing import Process
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -9,17 +8,30 @@ import uvicorn
 from zeroconf import ServiceInfo, Zeroconf
 import socket
 
-from ConnectionManager import ConnectionManager
-from DataQueueManager import DataQueueManager
-from InnerStreamFunctions import log_to_file, log_to_queue, data_processing_mock
-from UnityStream import stream_mockup, respond_to_discovery
+from Server.ConnectionManager import ConnectionManager
+from Utility.DataQueueManager import DataQueueManager
+from Model.InnerStreamFunctions import log_to_queue, data_processing_mock
+from Server.UnityStream import stream_mockup, respond_to_discovery
 
 # Websocket application listening and sending data stream
 websocketApp = FastAPI()
 # Log File Path
 log_file = "Log/Stream.txt"
-
+shared_queue = multiprocessing.Queue()
 manager = ConnectionManager()
+dataManager = DataQueueManager(shared_queue)
+data_task: asyncio.Task | None = None
+
+
+# Cleanly cancel & await it on shutdown
+@websocketApp.on_event("shutdown")
+async def shutdown_event():
+    if data_task is not None:
+        data_task.cancel()
+        try:
+            await data_task
+        except asyncio.CancelledError:
+            pass
 
 @websocketApp.websocket("/ws/ss")
 async def sensor_in_stream(websocket: WebSocket):
@@ -62,12 +74,27 @@ async def sensor_stream(websocket: WebSocket):
     :param websocket: WebSocket endpoint server used for the stream
     :return:
     """
+    global data_task
+
+    # the handler that registers new clients
     await manager.connect(websocket)
+
+
     try:
+        # now hand off to whatever mock‐stream you had
+        await data_processing_mock(dataManager, manager)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(websocket)
+    '''
+        try:
          await stream_mockup(manager)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         respond_to_discovery()
+    '''
+
 
 
 
@@ -110,25 +137,17 @@ def run_server(shared_queue):
     websocketApp.state.data_manager = DataQueueManager(shared_queue)
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
-def run_dataprocessing(dataManager):
-    asyncio.run(data_processing_mock(dataManager))
-
-
 
 if __name__ == "__main__":
 
-    shared_queue = multiprocessing.Queue()
 
     server_process = Process(target=run_server, args=(shared_queue,))
     server_process.start()
 
     zeroconf_sensor, info_sensor = advertise_service("sensor_stream", "ss", 8000)
     zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
-    dataManager = DataQueueManager(shared_queue)
     # Start for the first time the discovery of external connection requests to the unity websocket
     respond_to_discovery([info_unity])
-    model_processing = Process(target=run_dataprocessing, args=(dataManager,))
-    model_processing.start()
     # Test code to maintain the server active
     try:
         while True:
@@ -138,7 +157,6 @@ if __name__ == "__main__":
             else:
                 break
 
-        model_processing.terminate()
     finally:
         zeroconf_sensor.unregister_service(info_sensor)
         zeroconf_sensor.close()

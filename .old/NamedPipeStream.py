@@ -1,16 +1,11 @@
-import os
-import time
-import datetime
 import msgpack
-import re
 import struct
-from pydantic import BaseModel
 
-from InnerStreamFunctions import log_to_file
+from Model.InnerStreamFunctions import log_to_file
 
 # Pipe
 pipe_name = r'\\.\pipe\biosignals'
-log_file = "Log/Stream.txt"
+log_file = "../Log/Stream.txt"
 
 
 

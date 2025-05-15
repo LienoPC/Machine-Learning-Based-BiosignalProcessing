@@ -29,3 +29,9 @@ class ConnectionManager:
                 print(f"Error sending to {connection.client}: {e}")
                 self.disconnect(connection)
                 raise e
+
+    def connection_available(self):
+        if len(self.active_connections) > 0:
+            return True
+        else:
+            return False

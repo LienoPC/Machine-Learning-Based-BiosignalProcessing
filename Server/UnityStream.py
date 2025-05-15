@@ -49,9 +49,27 @@ def respond_to_discovery(service_info, timeout=20):
 
 
 async def stream_packet(connection_manager, packet):
-    await connection_manager.send_data(json.dumps(packet))
-    #print(f"Sent: {packet}")
+    if connection_manager.connection_available():
+        #print(f"Streaming data: {packet} to VR App")
+        await connection_manager.send_data(packet)
+        #print(f"Sent: {packet}")
 
+
+async def unity_stream(result, connection_manager):
+    '''
+
+    :param result: Its value can be 0 or 1, 0 means "not stressed" and 1 means "stressed"
+    :return:
+    '''
+    if result == 1:
+        data = {
+            "Emotion": "Stress",
+        }
+    else:
+        data = {
+            "Emotion": "NotStress",
+        }
+    await stream_packet(connection_manager, data)
 
 async def stream_mockup(websocket):
         """
