@@ -2,6 +2,7 @@ import asyncio
 import json
 import multiprocessing
 from multiprocessing import Process
+from threading import Lock
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
@@ -10,16 +11,17 @@ import socket
 
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
-from Model.InnerStreamFunctions import log_to_queue, data_processing_mock
+from Model.InnerStreamFunctions import log_to_queue, data_processing
 from Server.UnityStream import stream_mockup, respond_to_discovery
 
 # Websocket application listening and sending data stream
 websocketApp = FastAPI()
 # Log File Path
 log_file = "Log/Stream.txt"
-shared_queue = multiprocessing.Queue()
+shared_queue = multiprocessing.Manager.list()
+shared_queue_lock = Lock()
 manager = ConnectionManager()
-dataManager = DataQueueManager(shared_queue)
+dataManager = DataQueueManager(shared_queue, shared_queue_lock)
 data_task: asyncio.Task | None = None
 
 
@@ -44,7 +46,6 @@ async def sensor_in_stream(websocket: WebSocket):
     await websocket.accept()
     while True:
         data = await websocket.receive_text()
-        # Deserialize JSON
         try:
             parsed_data = json.loads(data)
 
@@ -56,7 +57,7 @@ async def sensor_in_stream(websocket: WebSocket):
             obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate}
             # Log received data to a text file
             #log_to_file(obj, log_file)
-            log_to_queue(obj, websocketApp.state.data_manager)
+            websocketApp.state.data_manager.push_single(obj)
 
 
         except json.JSONDecodeError as e:
@@ -67,22 +68,21 @@ async def sensor_in_stream(websocket: WebSocket):
 
 
 @websocketApp.websocket("/ws/ubs")
-async def sensor_stream(websocket: WebSocket):
+async def model_stream(websocket: WebSocket):
     """
-    App route that manages the WebSocket connection and communication to the Unity plugin.
+    App route that manages the WebSocket connection and communication to the Unity plugin. It launches the preprocess and inference thread
+    that produces the result of the classification and sends it to the Unity plugin using the websocket manager.
+    Potentially it could stream to multiple Unity applications
 
     :param websocket: WebSocket endpoint server used for the stream
     :return:
     """
-    global data_task
 
-    # the handler that registers new clients
     await manager.connect(websocket)
 
 
     try:
-        # now hand off to whatever mock‐stream you had
-        await data_processing_mock(dataManager, manager)
+        await data_processing(websocketApp.state.data_manage, manager, websocketApp.state.stop_event)
     except WebSocketDisconnect:
         pass
     finally:
@@ -133,8 +133,8 @@ def advertise_service(service_name: str, stream_id: str, port: int):
     return zeroconf, info
 
 def run_server(shared_queue):
-    websocketApp.state.shared_queue = shared_queue
     websocketApp.state.data_manager = DataQueueManager(shared_queue)
+    websocketApp.state.stop_event = asyncio.Event()
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
 
@@ -164,6 +164,7 @@ if __name__ == "__main__":
         zeroconf_unity.close()
         # Terminate server process
         print("Stopping WebSocket server...")
+        websocketApp.state.stop_event.set()
         server_process.terminate()
         server_process.join()
         print("Closing connection...")

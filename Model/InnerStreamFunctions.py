@@ -13,7 +13,8 @@ from scipy.signal import resample_poly
 from scipy.signal import butter
 
 from Server.UnityStream import unity_stream
-
+from Utility.SliderWindow import SliderWindow
+from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 
 class BiosignalData(BaseModel):
     heart_rate: int
@@ -63,6 +64,14 @@ def log_to_file(obj, log_file):
     log_file.write(f"PPG: {obj['ppg']}; {timestamp}\n")
     log_file.write(f"GSR: {obj['gsr']}; {timestamp}\n")
     log_file.write(f"Sample Rate: {obj['sample_rate']}; {timestamp}\n")
+
+def log_window_to_file(window, log_file):
+    for line in window:
+        log_to_file(line, log_file)
+
+    log_file = open(log_file, 'a')
+    log_file.write(f"//////////////////////////////////////Window//////////////////////////////////////////") # TODO: Remove this part, only for testing purpose
+
 
 def log_to_queue(obj, dataManager):
     dataManager.push_single(obj)
@@ -158,19 +167,63 @@ def extract_signals_from_filedata(sensor_data_list):
 
 
 
-async def data_processing_mock(dataManager, websocketManager):
+async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Event):
+    '''
+    Read the first line and get the sampling frequency. Then define the dimension of the window
+    :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
+    :param websocketManager: object that contains all references to all opened websocket connections (outstream)
+    :param stopEvent: event called by the main thread to block the execution of
+    :return:
+    '''
+    window_seconds = 5
+    overlap = 0.5
+    # Get sampling frequency when stream starts
+    sampling_freq = 15
     while True:
-        read_list = dataManager.read_batch(1)
+        first_line = dataManager.read_batch(1)
+        if first_line != None and len(first_line) > 0:
+            sampling_freq = first_line[0]['sample_rate']
+            break
+
+    window_samples = sampling_freq * window_seconds # Number of samples for each window
+
+    signal_preprocess = SignalPreprocess(sampling_freq)
+    slider = SliderWindow()
+    epoch = 0
+    async for _ in ticker(window_seconds): # Fires prediction every time a window is available
+        if stopEvent.is_set():
+            break
+        slider.tick()
+        # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
+        read_list = dataManager.read_window_overlap(window_samples, overlap)
         if read_list != None and len(read_list) > 0:
-            log_to_file(read_list[0], log_file="../Log/Stream.txt")
-        await unity_stream(apply_model_mock(read_list), websocketManager)
+            log_window_to_file(read_list, log_file="../Log/Stream.txt")
+        # Call the function to elaborate the signal window
+        #await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
+        await unity_stream(apply_model(read_list, signal_preprocess, epoch), websocketManager)
+
         await asyncio.sleep(0.5)
 
-def apply_model_mock(signal_window):
+def apply_model(signal_window, signal_preprocess, epoch):
+    spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
+    scalogram_image = signal_preprocess.epoch_to_scalogram_image(signal_window)
+    # TODO: Remove image saving, for testing only
+    fname = os.path.join("../Log/Images/Scalogram", f"epoch_{epoch + 1}.png")
+    cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
+    fname = os.path.join("../Log/Images/Spectrogram", f"epoch_{epoch + 1}.png")
+    cv2.imwrite(fname, cv2.cvtColor(spectrogram_image, cv2.COLOR_RGB2BGR))
+
+
+def apply_model_mock(signal_window, mean_value):
     # ELABORATE SIGNAL WINDOW
-    classification_res = biased_bit(random.random())
+    classification_res = biased_bit(mean_value)
     return classification_res
 
+
+async def ticker(interval: float):
+    while True:
+        yield
+        await asyncio.sleep(interval)
 
 def biased_bit(p: float) -> int:
     """

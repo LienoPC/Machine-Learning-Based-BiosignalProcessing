@@ -1,24 +1,38 @@
-import multiprocessing.queues
-'''
-Class that models the data structure used to excange samples received from the websocket
-and the data preprocessing process that prepares data to be fed to the AI model.
-It is based on a shared queue that can be securely accessed by both server and data process.
-'''
-class DataQueueManager():
+import threading
 
-    def __init__(self, shared_queue):
+
+class DataQueueManager():
+    '''
+    Class that models the data structure used to excange samples received from the websocket
+    and the data preprocessing process that prepares data to be fed to the AI model.
+    It is based on a shared queue that can be securely accessed by both server and data process.
+    '''
+    def __init__(self, shared_queue, lock = None):
         self.queue = shared_queue
+        self.lock = lock or threading.Lock()
 
     def push_single(self, obj):
-        self.queue.put(obj)
+        with self.lock:
+            self.queue.append(obj)
         #print(f"Push queue (local proxy id): {id(self.queue)}")
 
     def read_batch(self, num_entries):
-        read = []
-        #print(f"Read queue (local proxy id): {id(self.queue)}")
-        if self.queue.qsize() < num_entries:
-            num_entries = self.queue.qsize()
-        for i in range(0, num_entries):
-            read.append(self.queue.get())
-
+        with self.lock:
+            num = min(num_entries, len(self.queue))
+            read = list(self.queue[:num])
+            del self.queue[:num]
         return read
+
+    def read_window_overlap(self, num_entries, overlap):
+        with self.lock:
+            num = min(num_entries, len(self.queue))
+            keep = int(num_entries*overlap)
+            window = list(self.queue[:num])
+            if keep <= num:
+                consume = num - keep
+                del self.queue[:consume]
+            else:
+                del self.queue[:num]
+
+        return window
+

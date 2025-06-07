@@ -8,7 +8,7 @@ from scipy.signal import lfilter
 import matplotlib.pyplot as plt
 class SignalPreprocess():
 
-    def __init__(self, fs, lowcut, highcut, order):
+    def __init__(self, fs, lowcut = 0.5, highcut=10, order=6):
         self.lowcut = lowcut
         self.highcut = highcut
         self.fs = fs
@@ -49,7 +49,7 @@ class SignalPreprocess():
         filtered_signal, self.zi = lfilter(self.b, self.a, signal_samples, zi=self.zi)
         return filtered_signal
 
-    def epoch_to_spectrogram_image(self, epoch_data, lowfreq=2, highfreq=12, freqbin=1, output_size=(64, 64)):
+    def epoch_to_spectrogram_image(self, epoch_data, lowfreq=None, highfreq=None, freqbin=1, output_size=(64, 64)):
         '''
         Turn one window of raw signal (epoch_data) into a 3-channel image spectrogram
         :param epoch_data: 1D array of raw signal data
@@ -61,6 +61,8 @@ class SignalPreprocess():
         :return: Spectrogram image computed
         '''
 
+        lowfreq = lowfreq or self.lowcut
+        highfreq = highfreq or self.highcut
         # Filter the 1D time signal
         epoch_data = self.apply_bandpass_filter(epoch_data)
 
@@ -250,8 +252,8 @@ class SignalPreprocess():
 
     def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=30, overlap=0.5, num_scales=12, f_min=2, f_max=12, w=6.0, output_size=(64,64), output_folder='output_scalograms'):
         """
-        Creates a folder of scalogram images starting from a raw signal
-        :param raw_signal:
+        Creates a folder of scalogram images starting from a raw signal. Used for dataset preprocessing
+        :param raw_signal: a
         :param epoch_length:
         :param overlap:
         :param num_scales:
