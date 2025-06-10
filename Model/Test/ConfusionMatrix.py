@@ -21,10 +21,10 @@ def conf_matrix(testloader, model, classes):
         output = model(inputs)
 
         output = (torch.max(torch.exp(output), 1)[1]).data.cpu().numpy()
-        y_pred.extend(output)  # Save Prediction
+        y_pred.extend(output)
 
         labels = labels.data.cpu().numpy()
-        y_true.extend(labels)  # Save Truth
+        y_true.extend(labels)
 
     # Build confusion matrix
     cf_matrix = confusion_matrix(y_true, y_pred)

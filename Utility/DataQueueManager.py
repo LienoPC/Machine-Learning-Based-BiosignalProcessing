@@ -7,32 +7,31 @@ class DataQueueManager():
     and the data preprocessing process that prepares data to be fed to the AI model.
     It is based on a shared queue that can be securely accessed by both server and data process.
     '''
-    def __init__(self, shared_queue, lock = None):
+    def __init__(self, shared_queue):
         self.queue = shared_queue
-        self.lock = lock or threading.Lock()
 
     def push_single(self, obj):
-        with self.lock:
-            self.queue.append(obj)
+        self.queue.append(obj)
         #print(f"Push queue (local proxy id): {id(self.queue)}")
 
     def read_batch(self, num_entries):
-        with self.lock:
-            num = min(num_entries, len(self.queue))
-            read = list(self.queue[:num])
-            del self.queue[:num]
+        num = min(num_entries, len(self.queue))
+        read = list(self.queue[:num])
+        del self.queue[:num]
         return read
 
     def read_window_overlap(self, num_entries, overlap):
-        with self.lock:
-            num = min(num_entries, len(self.queue))
-            keep = int(num_entries*overlap)
-            window = list(self.queue[:num])
-            if keep <= num:
-                consume = num - keep
-                del self.queue[:consume]
-            else:
-                del self.queue[:num]
+        num = min(num_entries, len(self.queue))
+        keep = int(num_entries*overlap)
+        window = list(self.queue[:num])
+        if keep <= num:
+            consume = num - keep
+            del self.queue[:consume]
+        else:
+            del self.queue[:num]
 
         return window
+
+    def clear(self):
+        del self.queue[:]
 

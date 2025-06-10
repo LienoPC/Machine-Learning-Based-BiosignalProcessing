@@ -28,7 +28,6 @@ def respond_to_discovery(service_info, timeout=20):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('', DISCOVERY_PORT))
     sock.settimeout(timeout)  # Set the timeout on the socket
-    print(f"Discovery server listening on UDP port {DISCOVERY_PORT} with a timeout of {timeout} seconds.")
 
     while True:
         try:
@@ -39,7 +38,6 @@ def respond_to_discovery(service_info, timeout=20):
             break  # Exit the loop if no data is received within the timeout period
 
         message = data.decode('utf-8')
-        print(f"Received discovery message: {message} from {addr}")
         if message.strip() == "DISCOVER_WEBSOCKET":
 
             for info in service_info:

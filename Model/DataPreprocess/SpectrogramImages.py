@@ -2,7 +2,8 @@ import os
 import numpy as np
 import scipy.signal as signal
 import cv2
-from scipy.signal import butter
+import pywt
+from scipy.signal import butter, filtfilt
 from scipy.signal import lfilter_zi
 from scipy.signal import lfilter
 import matplotlib.pyplot as plt
@@ -30,11 +31,15 @@ class SignalPreprocess():
         :param highcut: Higher frequency
         :param order: Filter order
         '''
+        eps = 1e-8
         nyq_freq = 0.5 * self.fs
         # Normalize cutoffs of the Nyquist frequency
         low_freq = self.lowcut / nyq_freq
-        high_freq = self.highcut / nyq_freq
+        if(self.highcut > nyq_freq):
+            self.highcut = nyq_freq - eps
 
+        high_freq = self.highcut / nyq_freq
+        print(f"Normalized low_freq: {low_freq} and high_freq: {high_freq}")
         # Compute filter coefficients
         b, a = butter(order, [low_freq, high_freq], btype='band', output='ba')
         return b, a
@@ -44,12 +49,12 @@ class SignalPreprocess():
         :param signal_samples: 1D Time signal to be filtered
         :return: The filtered 1D time signal result from the bandpass filter
         '''
-        if not self.zi:
+        if not hasattr(self, 'zi'):
             self.initialize_filter(signal_samples[0])
-        filtered_signal, self.zi = lfilter(self.b, self.a, signal_samples, zi=self.zi)
+        filtered_signal = filtfilt(self.b, self.a, signal_samples)
         return filtered_signal
 
-    def epoch_to_spectrogram_image(self, epoch_data, lowfreq=None, highfreq=None, freqbin=1, output_size=(64, 64)):
+    def epoch_to_spectrogram_image(self, epoch_data, lowfreq=None, highfreq=None, freqbin=1, output_size=(224, 224)):
         '''
         Turn one window of raw signal (epoch_data) into a 3-channel image spectrogram
         :param epoch_data: 1D array of raw signal data
@@ -84,7 +89,7 @@ class SignalPreprocess():
 
         # Create the image
         img = np.stack([logp] * 3, axis=-1)
-        img = cv2.resize(img, output_size, interpolation=cv2.INTER_NEAREST)
+        img = cv2.resize(img, output_size, interpolation=cv2.INTER_LINEAR)
         img = (img * 255).astype(np.uint8)
 
         return img
@@ -176,7 +181,7 @@ class SignalPreprocess():
         return norm_specs
 
 
-    def compute_morlet_cwt(self, raw_signal, fs, num_scales=12, freq_min=2, freq_max=12, w=6.0):
+    def compute_morlet_cwt(self, raw_signal, fs, num_scales=12, freq_min=0.5, freq_max=10, w=6.0):
         '''
         Compute the continuous wavelet transform (using morlet wavelets)
         :param raw_signal: 1D Array of input signal
@@ -194,13 +199,13 @@ class SignalPreprocess():
 
         # Convert center frequencies to scales
         scales = (w * fs) / (2 * np.pi * center_freqs)
-
+        print(f"\nCenter frequencies for cwt: {center_freqs}\n\nScales for cwt: {scales}")
         # Compute CWT with morlet
         coefficients = signal.cwt(raw_signal, signal.morlet2, widths=scales, w=w)
 
         return coefficients, scales, center_freqs
 
-    def cwt_to_scalogram_image(self, coefficients, freqs, times=None, vmin=None, vmax=None, cmap_name='jet', n_colors=128, output_size=None, interpolation=cv2.INTER_NEAREST):
+    def cwt_to_scalogram_image(self, coefficients, freqs, times=None, vmin=None, vmax=None, cmap_name='jet', n_colors=128, output_size=(224,224), interpolation=cv2.INTER_LINEAR, epoch_data=None):
         '''
         Convert CWT coefficients into an RGB scalogram image using discrete jet color map (128 colors)
 
@@ -226,10 +231,12 @@ class SignalPreprocess():
             vmax = magnitude.max()
         normalized = np.clip((magnitude - vmin) / (vmax - vmin), 0, 1)
 
+        self.plot_scalogram(normalized, freqs, np.linspace(0,(len(epoch_data)-1)/self.fs,len(epoch_data), endpoint=True))
         # Compute colormap
         cmap = plt.get_cmap(cmap_name, n_colors)
         rgba_img = cmap(normalized)
         rgb_img = (rgba_img[..., :3] * 255).astype(np.uint8)
+        rgb_img = np.flipud(rgb_img)
 
         # Resize
         if output_size is not None:
@@ -237,6 +244,21 @@ class SignalPreprocess():
             rgb_img = cv2.resize(rgb_img, output_size, interpolation=interpolation)
 
         return rgb_img
+
+    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=12, freq_min=0.5, freq_max=10, w=6.0):
+        epoch_data = self.apply_bandpass_filter(epoch_data)
+        wavelet = pywt.ContinuousWavelet('cmor1.0-1.0')
+        freqs = np.linspace(freq_min, freq_max, num_scales)
+
+        fc = pywt.central_frequency(wavelet)
+        scales = fc * self.fs / freqs
+        pad_len = len(epoch_data)
+        data_p = np.pad(epoch_data, pad_width=pad_len, mode='symmetric')
+        coef_p, freq = pywt.cwt(data_p, scales, sampling_period=1/self.fs, wavelet=wavelet, method='fft')
+        coef = coef_p[:, pad_len: pad_len + pad_len]
+        scalogram_image = self.cwt_to_scalogram_image(coef, freq, epoch_data=epoch_data)
+        return scalogram_image
+
 
     def epoch_to_scalogram_image(self, epoch_data):
         # Apply pass filter
@@ -246,7 +268,7 @@ class SignalPreprocess():
         coeff, scales, center_freqs = self.compute_morlet_cwt(epoch_data, self.fs)
 
         # Compute image
-        scalogram_image = self.cwt_to_scalogram_image(coeff, center_freqs)
+        scalogram_image = self.cwt_to_scalogram_image(coeff, center_freqs, epoch_data=epoch_data)
 
         return scalogram_image
 
@@ -286,6 +308,14 @@ class SignalPreprocess():
 
 
 
-
+    def plot_scalogram(self, coeff, freqs, time_axis):
+        fig, axs = plt.subplots()
+        pcm = axs.pcolormesh(time_axis, freqs, coeff, shading='auto')
+        axs.set_yscale("log")
+        axs.set_xlabel("Time (s)")
+        axs.set_ylabel("Frequency (Hz)")
+        axs.set_title("Continuous Wavelet Transform (Scaleogram)")
+        fig.colorbar(pcm, ax=axs)
+        plt.show()
 
 

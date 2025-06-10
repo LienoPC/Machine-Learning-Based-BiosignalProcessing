@@ -3,6 +3,7 @@ import json
 import multiprocessing
 from multiprocessing import Process
 from threading import Lock
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
@@ -14,27 +15,26 @@ from Utility.DataQueueManager import DataQueueManager
 from Model.InnerStreamFunctions import log_to_queue, data_processing
 from Server.UnityStream import stream_mockup, respond_to_discovery
 
-# Websocket application listening and sending data stream
-websocketApp = FastAPI()
+
 # Log File Path
 log_file = "Log/Stream.txt"
-shared_queue = multiprocessing.Manager.list()
-shared_queue_lock = Lock()
+
 manager = ConnectionManager()
-dataManager = DataQueueManager(shared_queue, shared_queue_lock)
 data_task: asyncio.Task | None = None
 
 
 # Cleanly cancel & await it on shutdown
-@websocketApp.on_event("shutdown")
-async def shutdown_event():
-    if data_task is not None:
-        data_task.cancel()
-        try:
-            await data_task
-        except asyncio.CancelledError:
-            pass
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.stop_event = asyncio.Event()
+    mult_man = multiprocessing.Manager()
+    app.state.data_manager = DataQueueManager(mult_man.list())
+    yield
+    app.state.stop_event.set()
 
+
+# Websocket application listening and sending data stream
+websocketApp = FastAPI(lifespan=lifespan)
 @websocketApp.websocket("/ws/ss")
 async def sensor_in_stream(websocket: WebSocket):
     """
@@ -44,7 +44,9 @@ async def sensor_in_stream(websocket: WebSocket):
     :return:
     """
     await websocket.accept()
-    while True:
+    data_manager = websocketApp.state.data_manager
+    stop = websocketApp.state.stop_event
+    while not stop.is_set():
         data = await websocket.receive_text()
         try:
             parsed_data = json.loads(data)
@@ -56,14 +58,13 @@ async def sensor_in_stream(websocket: WebSocket):
 
             obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate}
             # Log received data to a text file
-            #log_to_file(obj, log_file)
-            websocketApp.state.data_manager.push_single(obj)
+            data_manager.push_single(obj)
 
 
         except json.JSONDecodeError as e:
             print(f"JSON decoding error: {e}")
         except WebSocketDisconnect as e:
-            print("WebSocketDisconnect:", e)
+            print(f"Sensor streaming client disconnected {e}, closing connection...")
 
 
 
@@ -77,14 +78,14 @@ async def model_stream(websocket: WebSocket):
     :param websocket: WebSocket endpoint server used for the stream
     :return:
     """
-
     await manager.connect(websocket)
-
-
+    data_manager = websocketApp.state.data_manager
+    stop = websocketApp.state.stop_event
+    stop.clear()
     try:
-        await data_processing(websocketApp.state.data_manage, manager, websocketApp.state.stop_event)
+        await data_processing(data_manager, manager, stop)
     except WebSocketDisconnect:
-        pass
+        print("Application client disconnected, closing connection...\n")
     finally:
         manager.disconnect(websocket)
     '''
@@ -132,18 +133,13 @@ def advertise_service(service_name: str, stream_id: str, port: int):
     print(f"Service '{full_service_name}' advertised at {local_ip}:{port} with properties {properties}")
     return zeroconf, info
 
-def run_server(shared_queue):
-    websocketApp.state.data_manager = DataQueueManager(shared_queue)
-    websocketApp.state.stop_event = asyncio.Event()
+def run_server():
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
 
 if __name__ == "__main__":
-
-
-    server_process = Process(target=run_server, args=(shared_queue,))
+    server_process = Process(target=run_server, args=())
     server_process.start()
-
     zeroconf_sensor, info_sensor = advertise_service("sensor_stream", "ss", 8000)
     zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
     # Start for the first time the discovery of external connection requests to the unity websocket
@@ -164,7 +160,6 @@ if __name__ == "__main__":
         zeroconf_unity.close()
         # Terminate server process
         print("Stopping WebSocket server...")
-        websocketApp.state.stop_event.set()
         server_process.terminate()
         server_process.join()
         print("Closing connection...")

@@ -24,7 +24,7 @@ class BiosignalData(BaseModel):
 
 def downsample_data_timestamps(raw_signal, timestamps, output_frequency):
     """
-    Resample a raw biosignal
+    Resample a raw signal with timestamps
     :param raw_signal: array of signal samples
     :param timestamps: array of timestamp sample-associated
     :param output_frequency: the desired output frequency to resample on
@@ -46,7 +46,7 @@ def downsample_data_timestamps(raw_signal, timestamps, output_frequency):
 
 def resample_signal(x, fs_in, fs_out):
     """
-    Resample from fs_in to fs_out using polyphase filtering.
+    Resample from fs_in to fs_out using polyphase filtering (without timestamps)
     """
     # find integer up/down factors
     from fractions import Fraction
@@ -159,9 +159,9 @@ def extract_signals_from_filedata(sensor_data_list):
     heart_rate_signal = []
 
     for sensor_data in sensor_data_list:
-        gsr_signal.append(sensor_data.gsr)
-        ppg_signal.append(sensor_data.ppg)
-        heart_rate_signal.append(sensor_data.heart_rate)
+        gsr_signal.append(sensor_data['gsr'])
+        ppg_signal.append(sensor_data['ppg'])
+        heart_rate_signal.append(sensor_data['heart_rate'])
 
     return gsr_signal, ppg_signal, heart_rate_signal
 
@@ -175,7 +175,7 @@ async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Even
     :param stopEvent: event called by the main thread to block the execution of
     :return:
     '''
-    window_seconds = 5
+    window_seconds = 15
     overlap = 0.5
     # Get sampling frequency when stream starts
     sampling_freq = 15
@@ -184,34 +184,45 @@ async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Even
         if first_line != None and len(first_line) > 0:
             sampling_freq = first_line[0]['sample_rate']
             break
-
+        # Flush the content of the streaming queue until now to not get old data
+        dataManager.clear()
     window_samples = sampling_freq * window_seconds # Number of samples for each window
+    print(f"Read sampling freq: {sampling_freq}\n\nNumber of samples per window: {window_samples}")
 
     signal_preprocess = SignalPreprocess(sampling_freq)
     slider = SliderWindow()
     epoch = 0
+    await asyncio.sleep(window_seconds)
+
     async for _ in ticker(window_seconds): # Fires prediction every time a window is available
         if stopEvent.is_set():
+            print("Exiting data streaming...")
             break
         slider.tick()
         # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
         read_list = dataManager.read_window_overlap(window_samples, overlap)
         if read_list != None and len(read_list) > 0:
-            log_window_to_file(read_list, log_file="../Log/Stream.txt")
-        # Call the function to elaborate the signal window
-        #await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
-        await unity_stream(apply_model(read_list, signal_preprocess, epoch), websocketManager)
+            #log_window_to_file(read_list, log_file="Log/Stream.txt")
+            # Call the function to elaborate the signal window
+            gsr_window, _, _ = extract_signals_from_filedata(read_list)
+            await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
+            prediction = apply_model(gsr_window, signal_preprocess, epoch)
+            epoch += 1
+            await unity_stream(prediction, websocketManager)
 
-        await asyncio.sleep(0.5)
 
 def apply_model(signal_window, signal_preprocess, epoch):
     spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
-    scalogram_image = signal_preprocess.epoch_to_scalogram_image(signal_window)
+    scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(signal_window)
     # TODO: Remove image saving, for testing only
-    fname = os.path.join("../Log/Images/Scalogram", f"epoch_{epoch + 1}.png")
+
+    fname = os.path.join("Log/Images/Scalogram", f"epoch_{epoch + 1}.png")
     cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
-    fname = os.path.join("../Log/Images/Spectrogram", f"epoch_{epoch + 1}.png")
+    fname = os.path.join("Log/Images/Spectrogram", f"epoch_{epoch + 1}.png")
     cv2.imwrite(fname, cv2.cvtColor(spectrogram_image, cv2.COLOR_RGB2BGR))
+
+    classification_res = biased_bit(0.5)
+    return classification_res
 
 
 def apply_model_mock(signal_window, mean_value):

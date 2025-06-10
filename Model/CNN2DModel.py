@@ -9,7 +9,7 @@ from torch.optim import lr_scheduler
 from torchsummary import summary
 import torchvision.transforms as transforms
 
-class SpectrogramImageDataset(dataset.Dataset):
+class SignalImageDataset(dataset.Dataset):
     """
     Dataset that elaborates spectrogram signal as images
 
@@ -71,7 +71,7 @@ def main_transfer_learning():
     model_name = 'resnet50'
     model = timm.create_model(model_name, pretrained = True, num_classes = classes)
     summary(model, (3,224,224))
-    # We should evaluate if insert class rebalancing basing on the number of elements
+    # We should evaluate to insert class rebalancing basing on the number of elements
 
 
     ## Define transfer learning criterion and learning rate scheduler
@@ -85,6 +85,6 @@ def main_transfer_learning():
     img_list = ""
     label_list = ""
     # To correct with the right img and label objects
-    train_set = SpectrogramImageDataset(img_list, label_list)
-    valid_set = SpectrogramImageDataset(img_list, label_list)
-    test_set = SpectrogramImageDataset(img_list, label_list)
+    train_set = SignalImageDataset(img_list, label_list)
+    valid_set = SignalImageDataset(img_list, label_list)
+    test_set = SignalImageDataset(img_list, label_list)

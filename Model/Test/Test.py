@@ -1,9 +1,10 @@
+from torchmetrics.classification import BinaryPrecisionRecallCurve
+from torchmetrics.classification import BinaryF1Score
 
+precision_recall = BinaryPrecisionRecallCurve()
+f1_score = BinaryF1Score()
 
+testloader = "testloader" #TODO: load here the test dataset
 
-testloader = "testloader" #TODO: load here the training dataset
-
-#TODO: when computing the precision-recall curve and F1-score, prepare here the train loop for different thresholds
-
-def test_function(model, testloader, ):
+def test_function(model, testloader):
     print("Work in progress...")
