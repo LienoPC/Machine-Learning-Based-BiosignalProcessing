@@ -7,9 +7,11 @@ from scipy.signal import butter, filtfilt
 from scipy.signal import lfilter_zi
 from scipy.signal import lfilter
 import matplotlib.pyplot as plt
+import neurokit2 as nk
+
 class SignalPreprocess():
 
-    def __init__(self, fs, lowcut = 0.5, highcut=10, order=6):
+    def __init__(self, fs, lowcut = 0.5, highcut=6, order=6):
         self.lowcut = lowcut
         self.highcut = highcut
         self.fs = fs
@@ -20,10 +22,10 @@ class SignalPreprocess():
         Initialize the bandpass filter, to be called the first time before starting filtering. Sets the zi filter's state to be used in each call
         :param initial_value: First value of the time-series signal
         '''
-        self.b, self.a = self.butter_bandpass_filter_definition()
+        self.b, self.a = self.butter_bandpass_filter_definition(6)
         self.zi = lfilter_zi(self.b, self.a) * initial_value
 
-    def butter_bandpass_filter_definition(self, order=4):
+    def butter_bandpass_filter_definition(self, order=6):
         '''
         Creates a butterworth bandpass filter. Returns polynomials (numerator and denominator) of the filter.
         :param fs: Sampling frequency (in Hz)
@@ -96,7 +98,7 @@ class SignalPreprocess():
 
     def entire_signal_to_spectrogram_images(self, raw_signal, epoch_length_sec=30, overlap=0.5,
                                              lowfreq=2, highfreq=12, freqbin=1,
-                                             output_size=(64, 64), output_folder='output_spectrograms'):
+                                             output_size=(64, 64), output_folder='Log/output_spectrograms'):
         """
         Process an entire vector of raw biosignal into a grayscale spectrogram images. Saves results in a folder to be used later
 
@@ -181,7 +183,7 @@ class SignalPreprocess():
         return norm_specs
 
 
-    def compute_morlet_cwt(self, raw_signal, fs, num_scales=12, freq_min=0.5, freq_max=10, w=6.0):
+    def compute_morlet_cwt(self, raw_signal, fs, num_scales=12, freq_min=0.5, freq_max=6, w=6.0):
         '''
         Compute the continuous wavelet transform (using morlet wavelets)
         :param raw_signal: 1D Array of input signal
@@ -199,7 +201,6 @@ class SignalPreprocess():
 
         # Convert center frequencies to scales
         scales = (w * fs) / (2 * np.pi * center_freqs)
-        print(f"\nCenter frequencies for cwt: {center_freqs}\n\nScales for cwt: {scales}")
         # Compute CWT with morlet
         coefficients = signal.cwt(raw_signal, signal.morlet2, widths=scales, w=w)
 
@@ -231,7 +232,7 @@ class SignalPreprocess():
             vmax = magnitude.max()
         normalized = np.clip((magnitude - vmin) / (vmax - vmin), 0, 1)
 
-        self.plot_scalogram(normalized, freqs, np.linspace(0,(len(epoch_data)-1)/self.fs,len(epoch_data), endpoint=True))
+        #self.plot_scalogram(normalized, freqs, np.linspace(0,(len(epoch_data)-1)/self.fs,len(epoch_data), endpoint=True))
         # Compute colormap
         cmap = plt.get_cmap(cmap_name, n_colors)
         rgba_img = cmap(normalized)
@@ -240,14 +241,13 @@ class SignalPreprocess():
 
         # Resize
         if output_size is not None:
-            # cv2.resize expects (width, height)
             rgb_img = cv2.resize(rgb_img, output_size, interpolation=interpolation)
 
         return rgb_img
 
-    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=12, freq_min=0.5, freq_max=10, w=6.0):
-        epoch_data = self.apply_bandpass_filter(epoch_data)
-        wavelet = pywt.ContinuousWavelet('cmor1.0-1.0')
+    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=6):
+        #epoch_data = self.apply_bandpass_filter(epoch_data)
+        wavelet = pywt.ContinuousWavelet('cmor1.0-1.5')
         freqs = np.linspace(freq_min, freq_max, num_scales)
 
         fc = pywt.central_frequency(wavelet)
@@ -263,7 +263,6 @@ class SignalPreprocess():
     def epoch_to_scalogram_image(self, epoch_data):
         # Apply pass filter
         epoch_data = self.apply_bandpass_filter(epoch_data)
-
         # Compute cwt
         coeff, scales, center_freqs = self.compute_morlet_cwt(epoch_data, self.fs)
 
@@ -272,7 +271,7 @@ class SignalPreprocess():
 
         return scalogram_image
 
-    def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=30, overlap=0.5, num_scales=12, f_min=2, f_max=12, w=6.0, output_size=(64,64), output_folder='output_scalograms'):
+    def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=30, overlap=0.5, output_folder='Log/output_scalograms'):
         """
         Creates a folder of scalogram images starting from a raw signal. Used for dataset preprocessing
         :param raw_signal: a
@@ -290,15 +289,22 @@ class SignalPreprocess():
         hop = int(epoch_samples * (1 - overlap))
         total = len(raw_signal)
         n_epochs = int(np.floor((total-epoch_samples)/hop) + 1)
-
         os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(output_folder + "/Plots", exist_ok=True)
+        eda_signals, info = nk.eda_process(eda_signal=raw_signal, sampling_rate=self.fs)
+        phasic_signal = nk.eda_phasic(raw_signal, sampling_rate=self.fs, method='sparse')
+        phasic_signal = eda_signals['EDA_Phasic'].values
+        cleaned_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')
 
+        final_signal = cleaned_signal
+        #fname = os.path.join(output_folder, f"Plots/Entire.png")
+        #plot_signal(raw_signal, fname)
         # Process each epoch
         for idx in range(n_epochs):
             start = idx * hop
-            epoch = raw_signal[start:start + epoch_samples]
+            epoch = final_signal[start:start + epoch_samples]
             # Get scalogram image
-            image = self.epoch_to_scalogram_image(epoch)
+            image = self.epoch_to_scalogram_image_pywt(epoch)
             # Save on file
             fname = os.path.join(output_folder, f"epoch_{idx+1}.png")
             cv2.imwrite(fname, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
@@ -318,4 +324,24 @@ class SignalPreprocess():
         fig.colorbar(pcm, ax=axs)
         plt.show()
 
+
+def plot_signal(signal, filename, title=None, xlabel='Sample', ylabel='Amplitude'):
+    """
+    Plots a 1D signal and saves the plot as an image file.
+
+    :param signal: Iterable of numeric values representing the signal.
+    :param filename: Path (including filename) where the plot image will be saved.
+    :param title: Title of the plot.
+    :param xlabel: Label for the x-axis.
+    :param ylabel: Label for the y-axis.
+    """
+    plt.figure()
+    plt.plot(signal)
+    if title:
+        plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.close()
 

@@ -15,6 +15,8 @@ from scipy.signal import butter
 from Server.UnityStream import unity_stream
 from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
+from fractions import Fraction
+
 
 class BiosignalData(BaseModel):
     heart_rate: int
@@ -48,9 +50,7 @@ def resample_signal(x, fs_in, fs_out):
     """
     Resample from fs_in to fs_out using polyphase filtering (without timestamps)
     """
-    # find integer up/down factors
-    from fractions import Fraction
-    frac = Fraction(fs_out, fs_in).limit_denominator()
+    frac = Fraction(int(fs_out), int(fs_in)).limit_denominator()
     up, down = frac.numerator, frac.denominator
     y = resample_poly(x, up, down)
     return y
@@ -75,6 +75,82 @@ def log_window_to_file(window, log_file):
 
 def log_to_queue(obj, dataManager):
     dataManager.push_single(obj)
+
+
+def parse_file_no_extract(filename, num_entries=None):
+    """
+    Reads the first num_entries entries (each consisting of 4 lines) from the file,
+    processes them into BiosignalData objects and returns them as a list
+
+    Each entry is expected to have the following format:
+        Heart Rate: <int>; <timestamp>
+        PPG: <float>; <timestamp>
+        GSR: <float>; <timestamp>
+        Sample Rate: <float>; <timestamp>
+
+    If num_entries is None, then the entire contents of the file are processed,
+    moved to the target file, and the original file is emptied.
+
+    :param filename: Name of the file to be parsed.
+    :param num_entries: Number of objects to read from the file (each object is 4 lines),
+                        if None, process the whole file.
+    :return: sensor_data_list: List of the read BiosignalData objects,
+             timestamp_list: List of timestamps associated with each entry
+    """
+    sensor_data_list = []
+    timestamp_list = []
+
+    # Regexes for each line type
+    hr_re = re.compile(r"^Heart Rate:\s*(-?\d+);\s*(.+)$")
+    ppg_re = re.compile(r"^PPG:\s*([\d.]+);\s*(.+)$")
+    gsr_re = re.compile(r"^GSR:\s*([\d.]+);\s*(.+)$")
+    sr_re = re.compile(r"^Sample Rate:\s*([\d.]+);\s*(.+)$")
+
+    def is_separator(line):
+        return line.startswith('/') and 'Window' in line
+
+    # load & strip
+    with open(filename, 'r') as f:
+        raw = [ln.strip() for ln in f]
+
+    # Drop blanks & separators early
+    lines = [ln for ln in raw if ln and not is_separator(ln)]
+
+    i = 0
+    read = 0
+    limit = float('inf') if num_entries is None else num_entries
+
+    while i + 3 < len(lines) and read < limit:
+        # Try to match a full 4-line record at lines[i:i+4]
+        m1 = hr_re.match(lines[i])
+        m2 = ppg_re.match(lines[i+1])
+        m3 = gsr_re.match(lines[i+2])
+        m4 = sr_re.match(lines[i+3])
+
+        if m1 and m2 and m3 and m4:
+            heart_rate = int(m1.group(1))
+            ppg = float(m2.group(1))
+            gsr = float(m3.group(1))
+            sample_rate = float(m4.group(1))
+            timestamp = m1.group(2)
+
+            sensor_data_list.append(BiosignalData(
+                heart_rate=heart_rate,
+                ppg=ppg,
+                gsr=gsr,
+                sample_rate=sample_rate
+            ))
+            timestamp_list.append(timestamp)
+
+            read += 1
+            i += 4
+        else:
+            # No match, shift window by one
+            i += 1
+
+    print(f"Sensor data list length: {len(sensor_data_list)}")
+    return sensor_data_list, timestamp_list
+
 
 def parse_file(filename, target_filename, num_entries=None):
     """
@@ -159,9 +235,10 @@ def extract_signals_from_filedata(sensor_data_list):
     heart_rate_signal = []
 
     for sensor_data in sensor_data_list:
-        gsr_signal.append(sensor_data['gsr'])
-        ppg_signal.append(sensor_data['ppg'])
-        heart_rate_signal.append(sensor_data['heart_rate'])
+        d = sensor_data.dict()
+        gsr_signal.append(d['gsr'])
+        ppg_signal.append(d['ppg'])
+        heart_rate_signal.append(d['heart_rate'])
 
     return gsr_signal, ppg_signal, heart_rate_signal
 
@@ -244,5 +321,19 @@ def biased_bit(p: float) -> int:
     return 1 if random.random() < p else 0
 
 
+def scalogram_test():
+    window_seconds = 10
+    overlap = 0.5
+    # Get sampling frequency when stream starts
+
+    sensor_data_list, _ = parse_file_no_extract("../Log/Stream.txt")
+    if len(sensor_data_list):
+        first_line = sensor_data_list[0]
+        sampling_freq = first_line.sample_rate
+        gsr, _, _ = extract_signals_from_filedata(sensor_data_list)
+        signal_preprocess = SignalPreprocess(sampling_freq)
+
+        signal_preprocess.entire_signal_to_scalogram_images(gsr, epoch_length=window_seconds, overlap=overlap)
 
 
+scalogram_test()

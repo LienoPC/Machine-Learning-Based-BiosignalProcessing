@@ -11,7 +11,7 @@ import torchvision.transforms as transforms
 
 class SignalImageDataset(dataset.Dataset):
     """
-    Dataset that elaborates spectrogram signal as images
+    Dataset that elaborates scalogram images
 
     img_list: list of images path
     label_list: path of the list of labels
@@ -38,7 +38,7 @@ class SignalImageDataset(dataset.Dataset):
         return image, label
 
 
-class SpectrogramImageTransform():
+class ScalogramImageTransform():
 
     def __init__(self, resize_dim, mean, std):
         self.transform = transforms.Compose([
@@ -51,6 +51,9 @@ class SpectrogramImageTransform():
         return self.transform(data)
 
 
+# Array of all transfer learning modes to try with the associated learning rates
+transfer_modes = [('whole', 0.001), ('last', 0.01), ('split', 0.0001, 0.01)]
+models = ['resnet50', 'mobilenetv4_large_100', 'densenet121']
 def main_transfer_learning():
 
     ## Data loading
@@ -60,31 +63,54 @@ def main_transfer_learning():
     mean = (0.5,0.5,0.5)
     std = 0.1
 
-    batch_size = 64
-
+    ## Create dataloaders
     path = "./Dataset"
-    ## Define model characteristics
-
-    classes = 2 # For now, we consider only two classes: stressed and not stressed
-
-    # Choose and existant ImageNet-Trained model to work with
-    model_name = 'resnet50'
-    model = timm.create_model(model_name, pretrained = True, num_classes = classes)
-    summary(model, (3,224,224))
-    # We should evaluate to insert class rebalancing basing on the number of elements
-
-
-    ## Define transfer learning criterion and learning rate scheduler
-    learning_rate = 0.001
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-
-
-    ## Create dataset
     img_list = ""
     label_list = ""
     # To correct with the right img and label objects
     train_set = SignalImageDataset(img_list, label_list)
     valid_set = SignalImageDataset(img_list, label_list)
     test_set = SignalImageDataset(img_list, label_list)
+
+
+def transfer_learn(model_name, train_loader, valid_loader, test_loader):
+    classes = 2 # For now, we consider only two classes: stressed and not stressed
+    batch_size = 64
+
+    ## Define model characteristics
+
+    # Choose and existant ImageNet-Trained model to work with
+    model = timm.create_model(model_name, pretrained=True, num_classes=classes)
+    summary(model, (3, 224, 224))
+    # We should evaluate to insert class rebalancing basing on the number of elements
+
+
+
+    for mode in transfer_modes:
+        learning_rate = 0.001
+        if mode[0] == 'whole':
+            learning_rate = mode[1]
+        if mode[0] == 'last':
+            learning_rate = mode[1]
+            model = freeze_non_fc_layers(model)
+        ## Define transfer learning criterion and learning rate scheduler
+        criterion = nn.BCELoss()
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        lr_decay = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+
+        Trai
+
+
+def freeze_non_fc_layers(model):
+    """
+        Freezes all parameters except those in fully‑connected (Linear) layers.
+    """
+    for param in model.parameters():
+        param.requires_grad = False
+
+    for module in model.modules():
+        if isinstance(module, nn.Linear):
+            for param in module.parameters():
+                param.requires_grad = True
+
+    return model
