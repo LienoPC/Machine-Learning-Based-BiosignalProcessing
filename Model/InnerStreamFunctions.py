@@ -13,6 +13,7 @@ from scipy.signal import resample_poly
 from scipy.signal import butter
 
 from Server.UnityStream import unity_stream
+from Utility.DataLog import DataLogger
 from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from fractions import Fraction
@@ -229,24 +230,26 @@ def parse_file(filename, target_filename, num_entries=None):
 
     return sensor_data_list, timestamp_list
 
-def extract_signals_from_filedata(sensor_data_list):
+def extract_signals_from_dict(sensor_data_list):
     gsr_signal = []
     ppg_signal = []
     heart_rate_signal = []
+    timestamps = []
 
     for sensor_data in sensor_data_list:
         d = sensor_data.dict()
         gsr_signal.append(d['gsr'])
         ppg_signal.append(d['ppg'])
         heart_rate_signal.append(d['heart_rate'])
+        timestamps.append(d['timestamp'])
 
-    return gsr_signal, ppg_signal, heart_rate_signal
+    return gsr_signal, ppg_signal, heart_rate_signal, timestamps
 
 
 
 async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Event):
     '''
-    Read the first line and get the sampling frequency. Then define the dimension of the window
+    Read the first line and get the sampling frequency. Then define the dimension of the window and starts receiving stream data
     :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
     :param websocketManager: object that contains all references to all opened websocket connections (outstream)
     :param stopEvent: event called by the main thread to block the execution of
@@ -254,6 +257,35 @@ async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Even
     '''
     window_seconds = 15
     overlap = 0.5
+    sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
+
+    signal_preprocess = SignalPreprocess(sampling_freq)
+    slider = SliderWindow()
+    await asyncio.sleep(window_seconds) # Wait for first window to be filled
+
+    # Create dataLog files
+    data_logger = DataLogger("../Log/")
+
+    async for _ in ticker(window_seconds): # Fires prediction every time a window is available
+        if stopEvent.is_set():
+            print("Exiting data streaming...")
+            break
+        slider.tick() # TODO: Remove, test only
+        # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
+        read_list = dataManager.read_window_overlap(window_samples, overlap)
+        if read_list != None and len(read_list) > 0:
+            # Call the function to elaborate the signal window
+            gsr_window, _, _, timestamp_window = extract_signals_from_dict(read_list)
+            # Write entire window to log file
+            for gsr, timestamp in zip(gsr_window, timestamp_window):
+                data_logger.add_raw(gsr, timestamp)
+
+            #await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager) TODO: Uncomment this line for testing purposes
+            prediction = apply_model(gsr_window, signal_preprocess, data_logger)
+            await unity_stream(prediction, websocketManager)
+
+
+async def get_sampling_freq(dataManager, window_seconds):
     # Get sampling frequency when stream starts
     sampling_freq = 15
     while True:
@@ -263,40 +295,19 @@ async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Even
             break
         # Flush the content of the streaming queue until now to not get old data
         dataManager.clear()
-    window_samples = sampling_freq * window_seconds # Number of samples for each window
-    print(f"Read sampling freq: {sampling_freq}\n\nNumber of samples per window: {window_samples}")
-
-    signal_preprocess = SignalPreprocess(sampling_freq)
-    slider = SliderWindow()
-    epoch = 0
-    await asyncio.sleep(window_seconds)
-
-    async for _ in ticker(window_seconds): # Fires prediction every time a window is available
-        if stopEvent.is_set():
-            print("Exiting data streaming...")
-            break
-        slider.tick()
-        # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
-        read_list = dataManager.read_window_overlap(window_samples, overlap)
-        if read_list != None and len(read_list) > 0:
-            #log_window_to_file(read_list, log_file="Log/Stream.txt")
-            # Call the function to elaborate the signal window
-            gsr_window, _, _ = extract_signals_from_filedata(read_list)
-            await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
-            prediction = apply_model(gsr_window, signal_preprocess, epoch)
-            epoch += 1
-            await unity_stream(prediction, websocketManager)
+    window_samples = sampling_freq * window_seconds  # Number of samples for each window
+    return sampling_freq, window_samples
 
 
-def apply_model(signal_window, signal_preprocess, epoch):
+def apply_model(signal_window, signal_preprocess, data_logger):
+    timestamp = datetime.datetime.now()
     spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
     scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(signal_window)
-    # TODO: Remove image saving, for testing only
 
-    fname = os.path.join("Log/Images/Scalogram", f"epoch_{epoch + 1}.png")
-    cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
-    fname = os.path.join("Log/Images/Spectrogram", f"epoch_{epoch + 1}.png")
-    cv2.imwrite(fname, cv2.cvtColor(spectrogram_image, cv2.COLOR_RGB2BGR))
+    # TODO: Apply trained model
+    res = 1
+
+    data_logger.add_prediction(res, scalogram_image, timestamp)
 
     classification_res = biased_bit(0.5)
     return classification_res
@@ -330,7 +341,7 @@ def scalogram_test():
     if len(sensor_data_list):
         first_line = sensor_data_list[0]
         sampling_freq = first_line.sample_rate
-        gsr, _, _ = extract_signals_from_filedata(sensor_data_list)
+        gsr, _, _ = extract_signals_from_dict(sensor_data_list)
         signal_preprocess = SignalPreprocess(sampling_freq)
 
         signal_preprocess.entire_signal_to_scalogram_images(gsr, epoch_length=window_seconds, overlap=overlap)

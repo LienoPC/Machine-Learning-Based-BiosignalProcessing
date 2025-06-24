@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import multiprocessing
 from multiprocessing import Process
@@ -55,8 +56,9 @@ async def sensor_in_stream(websocket: WebSocket):
             gsr = parsed_data.get("Gsr")
             ppg = parsed_data.get("Ppg")
             sample_rate = parsed_data.get("SampleRate")
+            timestamp = datetime.datetime.now()
 
-            obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate}
+            obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate, "timestamp": timestamp}
             # Log received data to a text file
             data_manager.push_single(obj)
 
