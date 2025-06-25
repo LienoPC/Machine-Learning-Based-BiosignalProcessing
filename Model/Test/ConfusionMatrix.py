@@ -1,3 +1,6 @@
+import io
+
+import cv2
 from sklearn.metrics import confusion_matrix
 import seaborn as sn
 import pandas as pd
@@ -32,4 +35,10 @@ def conf_matrix(testloader, model, classes):
                          columns=[i for i in classes])
     plt.figure(figsize=(12, 7))
     sn.heatmap(df_cm, annot=True)
-    plt.savefig('output.png')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close()
+    buf.seek(0)
+    img_array  = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    return img
