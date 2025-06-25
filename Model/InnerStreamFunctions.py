@@ -341,7 +341,7 @@ def scalogram_test():
     if len(sensor_data_list):
         first_line = sensor_data_list[0]
         sampling_freq = first_line.sample_rate
-        gsr, _, _ = extract_signals_from_dict(sensor_data_list)
+        gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
         signal_preprocess = SignalPreprocess(sampling_freq)
 
         signal_preprocess.entire_signal_to_scalogram_images(gsr, epoch_length=window_seconds, overlap=overlap)
