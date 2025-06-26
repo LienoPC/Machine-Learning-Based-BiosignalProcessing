@@ -1,77 +1,14 @@
-import cv2
 import numpy as np
-import torch
-import torch.utils.data.dataset as dataset
 from torch.utils.data import DataLoader, SubsetRandomSampler
-from PIL import Image
-
 import timm
-
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
 from torchsummary import summary
 import torchvision.transforms as transforms
 
-class SignalImageDataset(dataset.Dataset):
-    """
-    Dataset that elaborates scalogram images
-
-    img_list: list of images path
-    label_list: path of the list of labels
-    """
-
-    def __init__(self, img_list, label_list, transform=None):
-        self.img_list = img_list
-        self.label_list = label_list
-        # Transform operations to be applied on input images
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.img_list)
-
-    def __getitem__(self, item):
-        img_path = self.img_list['item']
-        image = Image.open(img_path)
-
-        if self.transform:
-            image = self.transform(image)
-
-        label = self.label_list['item']
-
-        return image, label
-
-
-class ScalogramImageTransform():
-
-    def __init__(self, resize_dim, mean, std):
-        self.transform = transforms.Compose([
-            transforms.Resize(resize_dim),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)
-        ])
-
-    def transform(self, data):
-        return self.transform(data)
-
-
-def compute_mean_std(dataloader, size):
-    psum = torch.tensor([0.0]) # Pixel sum
-    psum_sq = torch.tensor([0.0]) # Squared sum
-
-    for image in dataloader:
-        psum += image.sum(axis=[0, 2, 3])
-        psum_sq += (image**2).sum(axis=[0, 2, 3])
-
-    # Pixel count
-    count = len(dataloader)*size
-
-    total_mean = psum/count
-    total_var = (psum_sq/count) - (total_mean**2)
-    total_std = torch.sqrt(total_var)
-    print('- mean: {:.4f}'.format(total_mean.item()))
-    print('- std:  {:.4f}'.format(total_std.item()))
-    return total_mean, total_std
+from Model.Dataset.SignalImageDataset import SignalImageDataset
+from Model.Train import train_loop
 
 
 # Array of all transfer learning modes to try with the associated learning rates
@@ -91,8 +28,6 @@ def main_transfer_learning():
     train_img_list = ""
     train_label_list = ""
 
-    test_img_list = ""
-    test_label_list = ""
 
     # Transformation
     transform = transforms.Compose([
@@ -101,7 +36,6 @@ def main_transfer_learning():
     ])
     # TODO: change with the right img and label objects
     train_set = SignalImageDataset(train_img_list, train_label_list, transform)
-    test_set = SignalImageDataset(test_img_list, test_label_list, transform)
 
     # Batch size
     batch_size = 128
@@ -118,9 +52,12 @@ def main_transfer_learning():
     # Dataloaders
     train_dataloader = DataLoader(dataset=train_set, batch_size=batch_size, sampler=train_sampler)
     valid_dataloader = DataLoader(dataset=train_set, batch_size=batch_size, sampler=val_sampler)
-    test_dataloader = DataLoader(dataset=test_set, batch_size=batch_size, shuffle=True)
 
-def transfer_learn(model_name, train_loader, valid_loader, test_loader):
+
+    for model in models:
+        transfer_learn(model, train_dataloader, valid_dataloader)
+
+def transfer_learn(model_name, train_loader, valid_loader):
     classes = 2 # For now, we consider only two classes: stressed and not stressed
     batch_size = 64
 
@@ -131,7 +68,8 @@ def transfer_learn(model_name, train_loader, valid_loader, test_loader):
     summary(model, (3, 224, 224))
     # We should evaluate to insert class rebalancing basing on the number of elements
 
-
+    dataloaders = {'train': train_loader, 'valid': valid_loader}
+    dataset_sizes = {'train': len(train_loader), 'valid': len(valid_loader)}
 
     for mode in transfer_modes:
         learning_rate = 0.001
@@ -145,6 +83,7 @@ def transfer_learn(model_name, train_loader, valid_loader, test_loader):
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
         lr_decay = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
+        model, best_threshold = train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, lr_decay=lr_decay)
 
 
 

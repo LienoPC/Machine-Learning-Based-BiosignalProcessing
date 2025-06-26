@@ -1,7 +1,5 @@
 import copy
 import matplotlib.pyplot as plt
-import numpy as np
-import os
 import time
 import torch
 import csv
@@ -20,7 +18,7 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
     :param model: Model to be trained
     :param criterion: Optimization criterion (loss)
     :param optimizer: Optimizer to use for training
-    :param scheduler: Instance of ``torch.optim.lr_scheduler``
+    :param scheduler: Scheduler for optimization
     :param dataloaders: Array of dataloaders in the form of ['train', 'val']
     :param dataset_sizes: Array of length for each phase dataset
     :param num_epochs: Number of epochs
@@ -46,7 +44,6 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
               model.train()  # Set model to training mode
             else:
               model.eval()   # Set model to evaluate mode
-
             running_loss = 0.0
             running_corrects = 0
 
@@ -68,9 +65,9 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
                     loss.backward()
                     optimizer.step()
 
-                    # Compute precision-recall curve and f1-score
-                    if phase == 'val':
-                        pr_curve.update(outputs, labels)
+                # Compute precision-recall curve and f1-score
+                if phase == 'val':
+                    pr_curve.update(outputs, labels)
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
