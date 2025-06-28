@@ -8,7 +8,7 @@ from torchsummary import summary
 import torchvision.transforms as transforms
 
 from Model.Dataset.SignalImageDataset import SignalImageDataset
-from Model.Train import train_loop
+from Model.Train.Train import train_loop
 
 
 # Array of all transfer learning modes to try with the associated learning rates

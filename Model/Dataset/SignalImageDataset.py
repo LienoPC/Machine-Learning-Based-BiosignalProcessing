@@ -23,13 +23,13 @@ class SignalImageDataset(dataset.Dataset):
         return len(self.img_list)
 
     def __getitem__(self, item):
-        img_path = self.img_list['item']
+        img_path = self.img_list[item]
         image = Image.open(img_path)
 
         if self.transform:
             image = self.transform(image)
 
-        label = self.label_list['item']
+        label = self.label_list[item]
 
         return image, label
 

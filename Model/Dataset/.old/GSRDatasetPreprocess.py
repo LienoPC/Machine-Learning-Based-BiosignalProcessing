@@ -41,7 +41,6 @@ for var_name, var_value in mat_data.items():
             print("Raw data:")
             print(var_value)
     else:
-        # For variables that are not straightforward arrays (e.g., structs, nested arrays)
         print("Data (raw):")
         print(var_value)
 
