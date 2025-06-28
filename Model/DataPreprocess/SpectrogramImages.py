@@ -46,6 +46,7 @@ class SignalPreprocess():
         b, a = butter(order, [low_freq, high_freq], btype='band', output='ba')
         return b, a
 
+
     def apply_bandpass_filter(self, signal_samples):
         '''
         :param signal_samples: 1D Time signal to be filtered
@@ -96,9 +97,9 @@ class SignalPreprocess():
 
         return img
 
-    def entire_signal_to_spectrogram_images(self, raw_signal, epoch_length_sec=30, overlap=0.5,
-                                             lowfreq=2, highfreq=12, freqbin=1,
-                                             output_size=(64, 64), output_folder='Log/output_spectrograms'):
+    def entire_signal_to_spectrogram_images(self, raw_signal, epoch_length_sec=15, overlap=0.5,
+                                             lowfreq=0.5, highfreq=6, freqbin=1,
+                                             output_size=(224, 224), output_folder='Log/output_spectrograms'):
         """
         Process an entire vector of raw biosignal into a grayscale spectrogram images. Saves results in a folder to be used later
 
@@ -245,7 +246,7 @@ class SignalPreprocess():
 
         return rgb_img
 
-    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=6):
+    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=4):
         #epoch_data = self.apply_bandpass_filter(epoch_data)
         wavelet = pywt.ContinuousWavelet('cmor1.0-1.5')
         freqs = np.linspace(freq_min, freq_max, num_scales)
@@ -271,7 +272,7 @@ class SignalPreprocess():
 
         return scalogram_image
 
-    def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=30, overlap=0.5, output_folder='Log/output_scalograms'):
+    def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=15, overlap=0.5, output_folder='Log/output_scalograms'):
         """
         Creates a folder of scalogram images starting from a raw signal. Used for dataset preprocessing
         :param raw_signal: a
@@ -291,12 +292,9 @@ class SignalPreprocess():
         n_epochs = int(np.floor((total-epoch_samples)/hop) + 1)
         os.makedirs(output_folder, exist_ok=True)
         os.makedirs(output_folder + "/Plots", exist_ok=True)
-        eda_signals, info = nk.eda_process(eda_signal=raw_signal, sampling_rate=self.fs)
-        phasic_signal = nk.eda_phasic(raw_signal, sampling_rate=self.fs, method='sparse')
-        phasic_signal = eda_signals['EDA_Phasic'].values
-        cleaned_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')
 
-        final_signal = cleaned_signal
+        final_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')
+        img_list_path = []
         #fname = os.path.join(output_folder, f"Plots/Entire.png")
         #plot_signal(raw_signal, fname)
         # Process each epoch
@@ -307,12 +305,21 @@ class SignalPreprocess():
             image = self.epoch_to_scalogram_image_pywt(epoch)
             # Save on file
             fname = os.path.join(output_folder, f"epoch_{idx+1}.png")
+            img_list_path.append(fname)
             cv2.imwrite(fname, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
         print(f"Saved {n_epochs} scalogram images to '{output_folder}'")
 
+        return img_list_path
 
+    def low_freq_filter(self, raw_signal):
+        # Savitzky–Golay smooth at 4Hz
+        smoothed = signal.savgol_filter(raw_signal, window_length=9, polyorder=2)
 
+        # Upsample signal
+        upsampled = signal.resample_poly(smoothed, up=2, down=1)
+
+        return upsampled
 
     def plot_scalogram(self, coeff, freqs, time_axis):
         fig, axs = plt.subplots()
