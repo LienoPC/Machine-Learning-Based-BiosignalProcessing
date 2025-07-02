@@ -34,35 +34,43 @@ class SignalImageDataset(dataset.Dataset):
         return image, label
 
     @staticmethod
-    def compute_mean_std(dataloader, size):
-        psum = torch.tensor([0.0])  # Pixel sum
-        psum_sq = torch.tensor([0.0])  # Squared sum
+    def compute_mean_std(dataloader):
+        psum = torch.tensor([0.0, 0.0, 0.0])
+        psum_sq = torch.tensor([0.0, 0.0, 0.0])
+        n_pixels = 0
 
-        for image in dataloader:
-            psum += image.sum(axis=[0, 2, 3])
-            psum_sq += (image ** 2).sum(axis=[0, 2, 3])
+        for images, _ in dataloader:
+            # images: (B, C, H, W)
+            B, C, H, W = images.shape
+            n_pixels += B * H * W
 
-        # Pixel count
-        count = len(dataloader) * size
+            psum += images.sum(dim=[0, 2, 3])
+            psum_sq += (images ** 2).sum(dim=[0, 2, 3])
 
-        total_mean = psum / count
-        total_var = (psum_sq / count) - (total_mean ** 2)
+        total_mean = psum / n_pixels
+        total_var = (psum_sq / n_pixels) - total_mean ** 2
         total_std = torch.sqrt(total_var)
-        print('- mean: {:.4f}'.format(total_mean.item()))
-        print('- std:  {:.4f}'.format(total_std.item()))
+
+        print(f"- mean: {total_mean}")
+        print(f"- std:  {total_std}")
         return total_mean, total_std
 
 
 class ScalogramImageTransform():
 
-    def __init__(self, resize_dim, mean, std):
-        self.transform = transforms.Compose([
+    def __init__(self, resize_dim, mean=None, std=None):
+        transform_list = [
             transforms.Resize(resize_dim),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)
-        ])
+            transforms.ToTensor()
+        ]
 
-    def transform(self, data):
-        return self.transform(data)
+        if mean is not None and std is not None:
+            transform_list.append(transforms.Normalize(mean, std))
+
+        self.transform = transforms.Compose(transform_list)
+
+
+    def get_transform(self):
+        return self.transform
 
 

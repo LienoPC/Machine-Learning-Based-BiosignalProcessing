@@ -3,21 +3,24 @@ import datetime
 import random
 import re
 
+import cv2
+from PIL import Image
+
 import pandas as pd
 from pydantic import BaseModel
 import os
-import numpy as np
-import scipy.signal as signal
-import cv2
-from scipy.signal import resample_poly
-from scipy.signal import butter
 
+from scipy.signal import resample_poly
+
+from Model.Predictor import Predictor
 from Server.UnityStream import unity_stream
 from Utility.DataLog import DataLogger
 from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from fractions import Fraction
 
+from scipy.signal import decimate
+import requests
 
 class BiosignalData(BaseModel):
     heart_rate: int
@@ -234,16 +237,17 @@ def extract_signals_from_dict(sensor_data_list):
     gsr_signal = []
     ppg_signal = []
     heart_rate_signal = []
-    timestamps = []
+    sampling_rate = []
 
     for sensor_data in sensor_data_list:
         d = sensor_data.dict()
+        print(d)
         gsr_signal.append(d['gsr'])
         ppg_signal.append(d['ppg'])
         heart_rate_signal.append(d['heart_rate'])
-        timestamps.append(d['timestamp'])
+        sampling_rate.append(d['sample_rate'])
 
-    return gsr_signal, ppg_signal, heart_rate_signal, timestamps
+    return gsr_signal, ppg_signal, heart_rate_signal, sampling_rate
 
 
 
@@ -301,16 +305,25 @@ async def get_sampling_freq(dataManager, window_seconds):
 
 def apply_model(signal_window, signal_preprocess, data_logger):
     timestamp = datetime.datetime.now()
-    spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
+    #spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
     scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(signal_window)
+    # Encode image
+    success, encoded_png = cv2.imencode('.png', scalogram_image)
+    if not success:
+        raise RuntimeError("Could not encode image")
 
-    # TODO: Apply trained model
-    res = 1
+    files = {'file': ('scalogram.png', encoded_png.tobytes(), 'image/png')}
+    url = "http://localhost:8000/predict"
+    resp = requests.post(url, files=files)
 
-    data_logger.add_prediction(res, scalogram_image, timestamp)
+    if resp.status_code == 200:
+        data = resp.json()
+        data_logger.add_prediction(data['label'], scalogram_image, timestamp)
+        return data['label']
+    else:
+        print("Error", resp.status_code, resp.text)
 
-    classification_res = biased_bit(0.5)
-    return classification_res
+
 
 
 def apply_model_mock(signal_window, mean_value):
@@ -333,18 +346,36 @@ def biased_bit(p: float) -> int:
 
 
 def scalogram_test():
-    window_seconds = 10
+    window_seconds = 15
     overlap = 0.5
     # Get sampling frequency when stream starts
 
-    sensor_data_list, _ = parse_file_no_extract("../Log/Stream.txt")
+    sensor_data_list, _ = parse_file_no_extract("./Log/Stream/Stream.txt")
     if len(sensor_data_list):
         first_line = sensor_data_list[0]
         sampling_freq = first_line.sample_rate
         gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
-        signal_preprocess = SignalPreprocess(sampling_freq)
 
-        signal_preprocess.entire_signal_to_scalogram_images(gsr, epoch_length=window_seconds, overlap=overlap)
+        # Resample to 4Hz
+        #resampled_gsr = resample_signal(gsr, sampling_freq, 4)
+        resampled_gsr = decimate(gsr, q=32, ftype='iir', zero_phase=True)
+        signal_preprocess = SignalPreprocess(4)
+
+        signal_preprocess.entire_signal_to_scalogram_images(resampled_gsr, epoch_length=window_seconds, overlap=overlap)
 
 
-#scalogram_test()
+def dataset_forward_pass_test():
+    model_name = 'resnet50'
+    model_path = "./Log/Saved/3/resnet50_differential/resnet50_differential_100.pt"
+    mean = [0.0657, 0.2120, 0.7650]
+    std = [0.1999, 0.3295, 0.2286]
+    predictor = Predictor(model_name, model_path, mean=mean, std=std, threshold=False)
+    dir_path = './Log/output_scalograms'
+    idx = 1
+    for img in os.listdir(dir_path):
+        image = Image.open(f"{dir_path}/{img}")
+        prediction = predictor.predict(image)
+        print(f"{idx} Prediction: {prediction} \n")
+        idx += 1
+
+#dataset_forward_pass_test()
