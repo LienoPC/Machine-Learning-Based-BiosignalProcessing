@@ -4,6 +4,7 @@ import random
 import re
 
 import cv2
+import numpy as np
 from PIL import Image
 
 import pandas as pd
@@ -18,6 +19,7 @@ from Utility.DataLog import DataLogger
 from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from fractions import Fraction
+import neurokit2 as nk
 
 from scipy.signal import decimate
 import requests
@@ -303,7 +305,7 @@ async def get_sampling_freq(dataManager, window_seconds):
     return sampling_freq, window_samples
 
 
-def apply_model(signal_window, signal_preprocess, data_logger):
+def apply_model(signal_window, signal_preprocess, data_logger=None):
     timestamp = datetime.datetime.now()
     #spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
     scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(signal_window)
@@ -318,7 +320,8 @@ def apply_model(signal_window, signal_preprocess, data_logger):
 
     if resp.status_code == 200:
         data = resp.json()
-        data_logger.add_prediction(data['label'], scalogram_image, timestamp)
+        if data_logger:
+            data_logger.add_prediction(data['label'], scalogram_image, timestamp)
         return data['label']
     else:
         print("Error", resp.status_code, resp.text)
@@ -365,17 +368,34 @@ def scalogram_test():
 
 
 def dataset_forward_pass_test():
-    model_name = 'resnet50'
-    model_path = "./Log/Saved/3/resnet50_differential/resnet50_differential_100.pt"
-    mean = [0.0657, 0.2120, 0.7650]
-    std = [0.1999, 0.3295, 0.2286]
-    predictor = Predictor(model_name, model_path, mean=mean, std=std, threshold=False)
-    dir_path = './Log/output_scalograms'
-    idx = 1
-    for img in os.listdir(dir_path):
-        image = Image.open(f"{dir_path}/{img}")
-        prediction = predictor.predict(image)
-        print(f"{idx} Prediction: {prediction} \n")
-        idx += 1
+
+    sensor_data_list, _ = parse_file_no_extract("./Model/Log/Stream/Stream.txt")
+    epoch_length = 15
+    overlap = 0.5
+    epoch_samples = int(epoch_length * 4)
+    hop = int(epoch_samples * (1 - overlap))
+
+    if len(sensor_data_list):
+
+        first_line = sensor_data_list[0]
+        sampling_freq = first_line.sample_rate
+        gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
+
+        final_signal = np.asarray(nk.eda_clean(gsr, sampling_rate=sampling_freq, method='neurokit'))
+
+        # Resample to 4Hz
+        # resampled_gsr = resample_signal(gsr, sampling_freq, 4)
+        resampled_gsr = decimate(final_signal, q=32, ftype='iir', zero_phase=True)
+
+        total = len(resampled_gsr)
+        signal_preprocess = SignalPreprocess(4)
+        n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
+
+        for idx in range(n_epochs):
+            start = idx * hop
+            epoch = resampled_gsr[start:start + epoch_samples]
+            prediction = apply_model(epoch, signal_preprocess)
+            print(f"{idx} Prediction: {prediction} \n")
+            idx += 1
 
 #dataset_forward_pass_test()

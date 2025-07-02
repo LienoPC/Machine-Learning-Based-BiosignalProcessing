@@ -8,7 +8,7 @@ from threading import Lock
 from contextlib import asynccontextmanager
 
 from PIL import Image
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 import uvicorn
 from pydantic import BaseModel
 from zeroconf import ServiceInfo, Zeroconf
@@ -17,7 +17,7 @@ import socket
 from Model.Predictor import Predictor
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
-from Model.InnerStreamFunctions import log_to_queue, data_processing
+from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test
 from Server.UnityStream import stream_mockup, respond_to_discovery
 
 
@@ -30,7 +30,7 @@ data_task: asyncio.Task | None = None
 # Create predictor object
 MODEL_NAME = "densenet121"
 CHECKPOINT_PATH = "./Model/SavedModels/densenet121_differential_100.pt"
-DEVICE = "cpu"
+DEVICE = "cuda"
 
 predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE)
 
@@ -116,7 +116,7 @@ async def model_stream(websocket: WebSocket):
 
 # Predict endpoint
 @websocketApp.post("/predict", response_model=Prediction)
-async def predict(file):
+async def predict(file: UploadFile = File(...)):
     if file.content_type.split("/")[0] != "image":
         raise HTTPException(status_code=415, detail="Unsupported file type")
 
@@ -174,6 +174,7 @@ if __name__ == "__main__":
     zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
     # Start for the first time the discovery of external connection requests to the unity websocket
     respond_to_discovery([info_unity])
+    dataset_forward_pass_test()
     # Test code to maintain the server active
     try:
         while True:
