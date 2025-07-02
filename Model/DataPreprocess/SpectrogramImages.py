@@ -207,7 +207,7 @@ class SignalPreprocess():
 
         return coefficients, scales, center_freqs
 
-    def cwt_to_scalogram_image(self, coefficients, freqs, times=None, vmin=None, vmax=None, cmap_name='jet', n_colors=128, output_size=(224,224), interpolation=cv2.INTER_LINEAR, epoch_data=None):
+    def cwt_to_scalogram_image(self, coefficients, times=None, vmin=None, vmax=None, cmap_name='jet', n_colors=128, output_size=(224,224), interpolation=cv2.INTER_LINEAR, epoch_data=None):
         '''
         Convert CWT coefficients into an RGB scalogram image using discrete jet color map (128 colors)
 
@@ -272,7 +272,7 @@ class SignalPreprocess():
 
         return scalogram_image
 
-    def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=15, overlap=0.5, output_folder='Log/output_scalograms'):
+    def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=15, overlap=0.5, output_folder='Log/output_scalograms', additional_path='Dataset'):
         """
         Creates a folder of scalogram images starting from a raw signal. Used for dataset preprocessing
         :param raw_signal: a
@@ -297,6 +297,7 @@ class SignalPreprocess():
         img_list_path = []
         #fname = os.path.join(output_folder, f"Plots/Entire.png")
         #plot_signal(raw_signal, fname)
+        epoch_base = len(os.listdir(output_folder))
         # Process each epoch
         for idx in range(n_epochs):
             start = idx * hop
@@ -304,9 +305,10 @@ class SignalPreprocess():
             # Get scalogram image
             image = self.epoch_to_scalogram_image_pywt(epoch)
             # Save on file
-            fname = os.path.join(output_folder, f"epoch_{idx+1}.png")
-            img_list_path.append(fname)
+            fname = output_folder + "/" + f"epoch_{idx+epoch_base}.png"
             cv2.imwrite(fname, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            fname = additional_path + fname
+            img_list_path.append(fname)
 
         print(f"Saved {n_epochs} scalogram images to '{output_folder}'")
 

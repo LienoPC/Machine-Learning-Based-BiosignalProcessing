@@ -1,6 +1,10 @@
+import csv
+import os
 import pickle
 
 import numpy as np
+import pandas as pd
+from scipy.stats import mode
 
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from Model.InnerStreamFunctions import resample_signal
@@ -27,22 +31,92 @@ def resample_labels(labels, fs_old, fs_new):
     return new_labels
 
 
-with open("Data/WESAD/S2/S2.pkl", "rb") as file:
-    data = pickle.load(file, encoding="bytes")
+def window_labels(labels, window_size, stride):
+    windowed = []
+    for start in range(0, len(labels) - window_size + 1, stride):
+        block = labels[start : start + window_size]
+        counts = np.bincount(block)
+        label = counts.argmax()
+        windowed.append(label)
 
-    gsr_wrist = np.concatenate(data[b'signal'][b'wrist'][b'EDA'])
-    signal_preprocess = SignalPreprocess(4)
-
-    gsr_chest = np.concatenate(data[b'signal'][b'chest'][b'EDA'])
-    eda_resampled_chest = resample_signal(data[b'signal'][b'wrist'][b'EDA'], 700, 4)
-
-    labels = np.array(data[b'label'])
-    labels_resampled = resample_labels(labels, 700, 4)
-    print(labels.min(), labels.max())
-    labels_list = np.where(labels_resampled > 0.5, 1, 0)
-    print(labels_resampled.min(), labels_resampled.max())
-    gsr_wrist = 1/gsr_wrist * 100
-    print(labels_resampled)
-    #img_list = signal_preprocess.entire_signal_to_scalogram_images(gsr_wrist)
+    return np.array(windowed)
 
 
+def remove_invalid_labels_from_dataset():
+    df = pd.read_csv("Data/WESAD/WESAD.csv", header=None, names=["img", "label"])
+    df = df[df["label"].isin([1, 2])].reset_index(drop=True)
+    df["label"] = np.where(df["label"] == 1, 0, 1)
+    print(len(df))
+    df.to_csv("Data/WESAD/WESAD_filtered.csv", index=False, header=False)
+
+def redefine_invalid_labels_from_dataset():
+    df = pd.read_csv("Data/WESAD/WESAD.csv", header=None, names=["img", "label"])
+    df["label"] = np.where((df["label"] == 1) | (df["label"] > 2), 0, 1)
+
+    print(len(df))
+    df.to_csv("Data/WESAD/WESAD_redefined.csv", index=False, header=False)
+
+
+def build_dataset():
+    dir_list = os.listdir("Data/WESAD/")
+    img_list = []
+    labels_list = []
+
+    window_length = 15
+    fs = 4
+    overlap = 0.5
+    window_size = int(window_length * fs)
+    stride = int(window_size * (1 - overlap))
+    eps = 1e-6
+    for subj in dir_list:
+        with open(os.path.join("Data/WESAD/", subj, f"{subj}.pkl"), "rb") as file:
+            data = pickle.load(file, encoding="bytes")
+
+            gsr_wrist = np.concatenate(data[b'signal'][b'wrist'][b'EDA'])
+            signal_preprocess = SignalPreprocess(4)
+
+            labels = np.array(data[b'label'])
+
+            labels_resampled = resample_labels(labels, 700, 4)
+
+            assert len(gsr_wrist) == len(labels_resampled)
+            labels_window = window_labels(labels_resampled, window_size, stride)
+            labels_list.extend(labels_window)
+
+            gsr_wrist = 100.0 / (gsr_wrist + eps)
+
+            img_list.extend(signal_preprocess.entire_signal_to_scalogram_images(gsr_wrist, epoch_length=window_length, output_folder="Data/WESAD_Dataset", additional_path="Dataset/"))
+            assert len(img_list) == len(labels_list)
+
+
+    uniq_all, counts_all = np.unique(np.array(labels_list), return_counts=True)
+    print("Accumulated labels_list distribution:")
+    for u, c in zip(uniq_all, counts_all):
+        print(f"  Label {u}: {c} occurrences")
+
+
+
+    with open("Data/WESAD/WESAD.csv", "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        for img, label in zip(img_list, labels_list):
+            writer.writerow([img, label])
+
+
+    print(f"Img list length: {len(img_list)}")
+    print(f"Labels list length: {len(labels_list)}")
+    # Verify if saved data is correct
+    df = pd.read_csv("Data/WESAD/WESAD.csv", header=None, names=["img", "label"])
+
+    img_list_saved = df["img"].tolist()
+    label_list_saved = df["label"].astype(int).tolist()
+
+    for img, img_saved in zip(img_list, img_list_saved):
+        assert (img == img_saved)
+
+    for label, label_saved in zip(labels_list, label_list_saved):
+        assert (label == label_saved)
+
+
+build_dataset()
+remove_invalid_labels_from_dataset()
+redefine_invalid_labels_from_dataset()

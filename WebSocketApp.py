@@ -1,16 +1,20 @@
 import asyncio
 import datetime
+import io
 import json
 import multiprocessing
 from multiprocessing import Process
 from threading import Lock
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from PIL import Image
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 import uvicorn
+from pydantic import BaseModel
 from zeroconf import ServiceInfo, Zeroconf
 import socket
 
+from Model.Predictor import Predictor
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
 from Model.InnerStreamFunctions import log_to_queue, data_processing
@@ -23,6 +27,17 @@ log_file = "Log/Stream.txt"
 manager = ConnectionManager()
 data_task: asyncio.Task | None = None
 
+# Create predictor object
+MODEL_NAME = "densenet121"
+CHECKPOINT_PATH = "./Model/SavedModels/densenet121_differential_100.pt"
+DEVICE = "cpu"
+
+predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE)
+
+# Pydantic response model
+class Prediction(BaseModel):
+    probability: float
+    label: int
 
 # Cleanly cancel & await it on shutdown
 @asynccontextmanager
@@ -99,7 +114,20 @@ async def model_stream(websocket: WebSocket):
     '''
 
 
+# Predict endpoint
+@websocketApp.post("/predict", response_model=Prediction)
+async def predict(file):
+    if file.content_type.split("/")[0] != "image":
+        raise HTTPException(status_code=415, detail="Unsupported file type")
 
+    image = await file.read()
+    try:
+        img = Image.open(io.BytesIO(image)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Cannot open image")
+
+    prob, label = predictor.predict(img)
+    return Prediction(probability=prob, label=label)
 
 def advertise_service(service_name: str, stream_id: str, port: int):
     """
