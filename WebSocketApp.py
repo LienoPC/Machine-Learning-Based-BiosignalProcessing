@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from zeroconf import ServiceInfo, Zeroconf
 import socket
 
+from zeroconf.asyncio import AsyncZeroconf
+
 from Model.Predictor import Predictor
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
@@ -23,6 +25,8 @@ from Server.UnityStream import stream_mockup, respond_to_discovery
 
 # Log File Path
 log_file = "Log/Stream.txt"
+# Biosensor API exe
+biosensor_api = "./ShimmerAPI/ShimmerInterface.exe"
 
 manager = ConnectionManager()
 data_task: asyncio.Task | None = None
@@ -77,11 +81,12 @@ async def sensor_in_stream(websocket: WebSocket):
             # Log received data to a text file
             data_manager.push_single(obj)
 
-
-        except json.JSONDecodeError as e:
-            print(f"JSON decoding error: {e}")
-        except WebSocketDisconnect as e:
-            print(f"Sensor streaming client disconnected {e}, closing connection...")
+        except WebSocketDisconnect as exc:
+            print(f"WebSocket disconnected: code={exc.code}")
+        except Exception as exc:
+            print("WebSocket error:", exc)
+        finally:
+            print("Cleaning up sensor_in_stream")
 
 
 
@@ -129,14 +134,7 @@ async def predict(file: UploadFile = File(...)):
     prob, label = predictor.predict(img)
     return Prediction(probability=prob, label=label)
 
-def advertise_service(service_name: str, stream_id: str, port: int):
-    """
-    Advertise an existant WebSocket server with additional information
-
-    :param service_name: Unique name for the advertised service
-    :param stream_id: Identifier for the advertised stream
-    :param port: The port where the WebSocket server listens
-    """
+def get_service_info(service_name, stream_id, port):
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     service_type = "_ws._tcp.local."
@@ -157,43 +155,98 @@ def advertise_service(service_name: str, stream_id: str, port: int):
         properties=properties,
         server=f"{hostname}.local."
     )
+    return info
 
-    zeroconf = Zeroconf()
-    zeroconf.register_service(info)
-    print(f"Service '{full_service_name}' advertised at {local_ip}:{port} with properties {properties}")
+
+async def advertise_service(service_name, stream_id, port):
+    """
+    Advertise an existant WebSocket server with additional information
+
+    :param service_name: Unique name for the advertised service
+    :param stream_id: Identifier for the advertised stream
+    :param port: The port where the WebSocket server listens
+    """
+    info = get_service_info(service_name, stream_id, port)
+    zeroconf = AsyncZeroconf()
+    await zeroconf.async_register_service(info)
+    ips = [socket.inet_ntoa(addr) for addr in info.addresses]
+    props = {k.decode(): v.decode() for k, v in info.properties.items()}
+    print(f"Advertised {info.name} at {ips} with properties {props}")
     return zeroconf, info
+
+async def launch_process(path, cancel_token):
+    async def read_stream(stream, name):
+        async for raw in stream:
+            line = raw.decode(errors="ignore").rstrip()
+            print(f"BiosensorAPI-{name}> {line}")
+
+    proc = await asyncio.create_subprocess_exec(path, "", "", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    # Create terminal output tasks
+    stdout_task = asyncio.create_task(read_stream(proc.stdout, "STDOUT"))
+    stderr_task = asyncio.create_task(read_stream(proc.stderr, "STDERR"))
+    print("Started API process...")
+
+    # Wait to terminate
+    proc_wait_task = asyncio.create_task(proc.wait())
+    cancel_wait_task = asyncio.create_task(cancel_token.wait())
+
+    done, pending = await asyncio.wait( {proc_wait_task, cancel_wait_task}, return_when=asyncio.FIRST_COMPLETED)
+    print("Stopping Biosensor API...")
+    if cancel_token.is_set() and proc.returncode is None:
+        proc.terminate()
+        await proc.wait()
+
+    for task in pending:
+        task.cancel()
+
+    await stdout_task
+    await stderr_task
+
 
 def run_server():
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
+async def user_input_loop(info_unity):
+    respond_to_discovery([info_unity])
+    while True:
+        key = await asyncio.to_thread(input,
+            "Insert h to rediscover, any other key to exit:\n")
+        if key == "h":
+            respond_to_discovery([info_unity])
+        else:
+            return
 
-if __name__ == "__main__":
+async def main():
     server_process = Process(target=run_server, args=())
     server_process.start()
-    zeroconf_sensor, info_sensor = advertise_service("sensor_stream", "ss", 8000)
-    zeroconf_unity, info_unity = advertise_service("unitybiosignal_stream", "ubs", 8000)
+    sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
+
+    # Start API for biosensor
+    api_token = asyncio.Event()
+    api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
+
     # Start for the first time the discovery of external connection requests to the unity websocket
-    respond_to_discovery([info_unity])
-    dataset_forward_pass_test()
+    #dataset_forward_pass_test()
     # Test code to maintain the server active
     try:
-        while True:
-            key = input("Insert h to start again the discovery\nany other key to exit...\n\n")
-            if key == "h":
-                respond_to_discovery([info_unity])
-            else:
-                break
+        info_unity = get_service_info("unitybiosignal_stream", "ubs", 8000)
+        await user_input_loop(info_unity)
 
     finally:
-        zeroconf_sensor.unregister_service(info_sensor)
-        zeroconf_sensor.close()
-        zeroconf_unity.unregister_service(info_unity)
-        zeroconf_unity.close()
+        # Terminate biosensor api
+        api_token.set()
+        await api_task
+        # Stop webserver services from being advertised
+        zeroconf_sensor, info_sensor = await sensor_stream
+        await zeroconf_sensor.async_unregister_service(info_sensor)
+        await zeroconf_sensor.async_close()
         # Terminate server process
         print("Stopping WebSocket server...")
         server_process.terminate()
         server_process.join()
         print("Closing connection...")
 
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
