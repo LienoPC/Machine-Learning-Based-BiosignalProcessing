@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import multiprocessing
+import time
 from multiprocessing import Process
 from threading import Lock
 from contextlib import asynccontextmanager
@@ -66,9 +67,11 @@ async def sensor_in_stream(websocket: WebSocket):
     await websocket.accept()
     data_manager = websocketApp.state.data_manager
     stop = websocketApp.state.stop_event
-    while not stop.is_set():
-        data = await websocket.receive_text()
-        try:
+    try:
+        while not stop.is_set():
+            await asyncio.sleep(0.1)
+            data = await websocket.receive_text()
+
             parsed_data = json.loads(data)
 
             heart_rate = parsed_data.get("HeartRate")
@@ -78,15 +81,17 @@ async def sensor_in_stream(websocket: WebSocket):
             timestamp = datetime.datetime.now()
 
             obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate, "timestamp": timestamp}
-            # Log received data to a text file
+            print("Received data: {}".format(data))
+
             data_manager.push_single(obj)
 
-        except WebSocketDisconnect as exc:
-            print(f"WebSocket disconnected: code={exc.code}")
-        except Exception as exc:
-            print("WebSocket error:", exc)
-        finally:
-            print("Cleaning up sensor_in_stream")
+    except WebSocketDisconnect as exc:
+        print(f"WebSocket disconnected: code={exc.code}")
+    except Exception as exc:
+        print("WebSocket error:", exc)
+    finally:
+        print("Sensor connection closed.")
+
 
 
 
@@ -108,15 +113,10 @@ async def model_stream(websocket: WebSocket):
         await data_processing(data_manager, manager, stop)
     except WebSocketDisconnect:
         print("Application client disconnected, closing connection...\n")
+    except Exception as exc:
+        print("Model processing stream error:", exc)
     finally:
         manager.disconnect(websocket)
-    '''
-        try:
-         await stream_mockup(manager)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        respond_to_discovery()
-    '''
 
 
 # Predict endpoint
@@ -222,11 +222,13 @@ async def main():
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
-    api_token = asyncio.Event()
-    api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
+    #api_token = asyncio.Event()
+    #api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
 
     # Start for the first time the discovery of external connection requests to the unity websocket
-    #dataset_forward_pass_test()
+    await asyncio.sleep(10)
+    print("Executing forward pass")
+    dataset_forward_pass_test()
     # Test code to maintain the server active
     try:
         info_unity = get_service_info("unitybiosignal_stream", "ubs", 8000)
@@ -234,8 +236,8 @@ async def main():
 
     finally:
         # Terminate biosensor api
-        api_token.set()
-        await api_task
+        #api_token.set()
+        #await api_task
         # Stop webserver services from being advertised
         zeroconf_sensor, info_sensor = await sensor_stream
         await zeroconf_sensor.async_unregister_service(info_sensor)
