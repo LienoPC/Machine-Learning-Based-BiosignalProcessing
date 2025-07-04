@@ -3,7 +3,8 @@ import numpy as np
 import scipy.signal as signal
 import cv2
 import pywt
-from scipy.signal import butter, filtfilt
+from pandas.core.dtypes.inference import is_integer
+from scipy.signal import butter, filtfilt, decimate
 from scipy.signal import lfilter_zi
 from scipy.signal import lfilter
 import matplotlib.pyplot as plt
@@ -271,6 +272,32 @@ class SignalPreprocess():
         scalogram_image = self.cwt_to_scalogram_image(coeff, center_freqs, epoch_data=epoch_data)
 
         return scalogram_image
+
+    def clean_epoch(self, epoch_data, fs_data):
+        if fs_data == 4:
+            return epoch_data
+        final_signal = np.asarray(nk.eda_clean(epoch_data, sampling_rate=fs_data, method='neurokit'))
+        # Resample data to model frequency
+        if fs_data > self.fs and float.is_integer(fs_data/self.fs):
+            factor = int(fs_data / self.fs)
+            stages = []
+            if factor == 32:
+                stages = [4, 8]
+            elif factor == 24:
+                stages = [4, 6]
+            elif factor == 16:
+                stages = [4, 4]
+            if len(stages) > 0:
+                res_epoch = epoch_data
+                for q in stages:
+                    res_epoch = decimate(res_epoch, q=q, ftype='iir', zero_phase=True)
+                return res_epoch
+            else:
+                raise ValueError(f"Cannot resample from fs_data={fs_data} Hz to target fs={self.fs} Hz. fs_data must be an integer multiple of self.fs and > self.fs.")
+
+        else:
+            raise ValueError(f"Cannot resample from fs_data={fs_data} Hz to target fs={self.fs} Hz. fs_data must be an integer multiple of self.fs and > self.fs.")
+
 
     def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=15, overlap=0.5, output_folder='Log/output_scalograms', additional_path='Dataset'):
         """

@@ -1,25 +1,22 @@
 import asyncio
 import datetime
+import os
 import random
 import re
 
 import cv2
 import numpy as np
-from PIL import Image
 
 import pandas as pd
 from pydantic import BaseModel
-import os
 
 from scipy.signal import resample_poly
 
-from Model.Predictor import Predictor
 from Server.UnityStream import unity_stream
 from Utility.DataLog import DataLogger
 from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from fractions import Fraction
-import neurokit2 as nk
 
 from scipy.signal import decimate
 import requests
@@ -252,48 +249,9 @@ def extract_signals_from_dict(sensor_data_list):
     return gsr_signal, ppg_signal, heart_rate_signal, sampling_rate
 
 
-
-async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Event):
-    '''
-    Read the first line and get the sampling frequency. Then define the dimension of the window and starts receiving stream data
-    :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
-    :param websocketManager: object that contains all references to all opened websocket connections (outstream)
-    :param stopEvent: event called by the main thread to block the execution of
-    :return:
-    '''
-    window_seconds = 15
-    overlap = 0.5
-    sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
-
-    signal_preprocess = SignalPreprocess(sampling_freq)
-    slider = SliderWindow()
-    await asyncio.sleep(window_seconds) # Wait for first window to be filled
-
-    # Create dataLog files
-    data_logger = DataLogger("../Log/")
-
-    async for _ in ticker(window_seconds): # Fires prediction every time a window is available
-        if stopEvent.is_set():
-            print("Exiting data streaming...")
-            break
-        slider.tick() # TODO: Remove, test only
-        # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
-        read_list = dataManager.read_window_overlap(window_samples, overlap)
-        if read_list != None and len(read_list) > 0:
-            # Call the function to elaborate the signal window
-            gsr_window, _, _, timestamp_window = extract_signals_from_dict(read_list)
-            # Write entire window to log file
-            for gsr, timestamp in zip(gsr_window, timestamp_window):
-                data_logger.add_raw(gsr, timestamp)
-
-            #await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager) TODO: Uncomment this line for testing purposes
-            prediction = apply_model(gsr_window, signal_preprocess, data_logger)
-            await unity_stream(prediction, websocketManager)
-
-
 async def get_sampling_freq(dataManager, window_seconds):
     # Get sampling frequency when stream starts
-    sampling_freq = 15
+    sampling_freq = 0
     while True:
         first_line = dataManager.read_batch(1)
         if first_line != None and len(first_line) > 0:
@@ -305,26 +263,85 @@ async def get_sampling_freq(dataManager, window_seconds):
     return sampling_freq, window_samples
 
 
-def apply_model(signal_window, signal_preprocess, data_logger=None):
-    timestamp = datetime.datetime.now()
-    #spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(signal_window)
-    scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(signal_window)
-    # Encode image
-    success, encoded_png = cv2.imencode('.png', scalogram_image)
-    if not success:
-        raise RuntimeError("Could not encode image")
+async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Event):
+    '''
+    Read the first line and get the sampling frequency. Then define the dimension of the window and starts receiving stream data
+    :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
+    :param websocketManager: object that contains all references to all opened websocket connections (outstream)
+    :param stopEvent: event called by the main thread to block the execution of
+    :return:
+    '''
+    window_seconds = 15
+    overlap = 0.5
+    try:
 
-    files = {'file': ('scalogram.png', encoded_png.tobytes(), 'image/png')}
-    url = "http://localhost:8000/predict"
-    resp = requests.post(url, files=files)
+        sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
+        if sampling_freq == 0:
+            raise ValueError("Data format is not valid. Cannot find sampling frequency.")
 
-    if resp.status_code == 200:
-        data = resp.json()
-        if data_logger:
-            data_logger.add_prediction(data['label'], scalogram_image, timestamp)
-        return data['label']
-    else:
-        print("Error", resp.status_code, resp.text)
+        signal_preprocess = SignalPreprocess(4.0) # Create signal preprocess with 4Hz (the same frequency on which the model works)
+        slider = SliderWindow()
+        await asyncio.sleep(window_seconds) # Wait for first window to be filled
+
+        # Create dataLog files
+        data_logger = DataLogger("../Log/")
+
+        async for _ in ticker(window_seconds): # Fires prediction every time a window is available
+            if stopEvent.is_set():
+                print("Exiting data streaming...")
+                break
+
+            slider.tick() # TODO: Remove, test only
+
+            # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
+            read_list = dataManager.read_window_overlap(window_samples, overlap)
+
+            if read_list and len(read_list) > 0:
+                # Call the function to elaborate the signal window
+                gsr_window, _, _, timestamp_window = extract_signals_from_dict(read_list)
+                # Write entire window to log file
+                for gsr, timestamp in zip(gsr_window, timestamp_window):
+                    data_logger.add_raw(gsr, timestamp)
+
+                await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
+                prediction = apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                #await unity_stream(prediction, websocketManager)
+    except Exception as e:
+        raise e
+
+
+
+def apply_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+    """
+    Takes the window signal, applies preprocessing to it, and returns the prediction result
+    :param signal_window:
+    :param signal_preprocess:
+    :param data_logger:
+    :return:
+    """
+    try:
+        timestamp = datetime.datetime.now()
+        # Resample to 4Hz
+        clean_signal = signal_preprocess.clean_epoch(signal_window, sampling_freq)
+        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
+        # Encode image
+        success, encoded_png = cv2.imencode('.png', scalogram_image)
+        if not success:
+            raise RuntimeError("Could not encode image")
+
+        files = {'file': ('scalogram.png', encoded_png.tobytes(), 'image/png')}
+        url = "http://localhost:8000/predict"
+        resp = requests.post(url, files=files)
+
+        if resp.status_code == 200:
+            data = resp.json()
+            if data_logger:
+                data_logger.add_prediction(data['label'], scalogram_image, timestamp)
+            return data['label']
+        else:
+            raise Exception("Error", resp.status_code, resp.text)
+    except Exception as e:
+        raise e
 
 
 
@@ -349,22 +366,30 @@ def biased_bit(p: float) -> int:
 
 
 def scalogram_test():
-    window_seconds = 15
+    epoch_length = 15
     overlap = 0.5
     # Get sampling frequency when stream starts
-
     sensor_data_list, _ = parse_file_no_extract("./Log/Stream/Stream.txt")
+    first_line = sensor_data_list[0]
+    sampling_freq = first_line.sample_rate
     if len(sensor_data_list):
-        first_line = sensor_data_list[0]
-        sampling_freq = first_line.sample_rate
         gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
 
-        # Resample to 4Hz
-        #resampled_gsr = resample_signal(gsr, sampling_freq, 4)
-        resampled_gsr = decimate(gsr, q=32, ftype='iir', zero_phase=True)
+        total = len(gsr)
         signal_preprocess = SignalPreprocess(4)
+        epoch_samples = int(epoch_length * sampling_freq)
+        hop = int(epoch_samples * (1 - overlap))
+        n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
+        os.makedirs("./Log/Stream/Images", exist_ok=True)
 
-        signal_preprocess.entire_signal_to_scalogram_images(resampled_gsr, epoch_length=window_seconds, overlap=overlap)
+        for idx in range(n_epochs):
+            start = idx * hop
+            epoch = gsr[start:start + epoch_samples]
+            clean_signal = signal_preprocess.clean_epoch(epoch, sampling_freq)
+            scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
+            fname = "./Log/Stream/Images/" + f"epoch_{idx}.png"
+            cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
+            print(f"Saved at {fname}")
 
 
 def dataset_forward_pass_test():
@@ -372,30 +397,22 @@ def dataset_forward_pass_test():
     sensor_data_list, _ = parse_file_no_extract("./Model/Log/Stream/Stream.txt")
     epoch_length = 15
     overlap = 0.5
-    epoch_samples = int(epoch_length * 4)
+    first_line = sensor_data_list[0]
+    sampling_freq = first_line.sample_rate
+    epoch_samples = int(epoch_length * sampling_freq)
     hop = int(epoch_samples * (1 - overlap))
-
     if len(sensor_data_list):
-
-        first_line = sensor_data_list[0]
-        sampling_freq = first_line.sample_rate
         gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
 
-        final_signal = np.asarray(nk.eda_clean(gsr, sampling_rate=sampling_freq, method='neurokit'))
-
-        # Resample to 4Hz
-        # resampled_gsr = resample_signal(gsr, sampling_freq, 4)
-        resampled_gsr = decimate(final_signal, q=32, ftype='iir', zero_phase=True)
-
-        total = len(resampled_gsr)
+        total = len(gsr)
         signal_preprocess = SignalPreprocess(4)
         n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
 
         for idx in range(n_epochs):
             start = idx * hop
-            epoch = resampled_gsr[start:start + epoch_samples]
-            prediction = apply_model(epoch, signal_preprocess)
+            epoch = gsr[start:start + epoch_samples]
+            prediction = apply_model(epoch,sampling_freq, signal_preprocess)
             print(f"{idx} Prediction: {prediction} \n")
             idx += 1
 
-#dataset_forward_pass_test()
+scalogram_test()
