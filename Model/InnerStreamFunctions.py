@@ -17,9 +17,8 @@ from Utility.DataLog import DataLogger
 from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from fractions import Fraction
-
+import httpx
 from scipy.signal import decimate
-import requests
 
 class BiosignalData(BaseModel):
     heart_rate: int
@@ -237,16 +236,17 @@ def extract_signals_from_dict(sensor_data_list):
     ppg_signal = []
     heart_rate_signal = []
     sampling_rate = []
+    timestamps = []
 
     for sensor_data in sensor_data_list:
-        d = sensor_data.dict()
-        print(d)
+        d = sensor_data
         gsr_signal.append(d['gsr'])
         ppg_signal.append(d['ppg'])
         heart_rate_signal.append(d['heart_rate'])
         sampling_rate.append(d['sample_rate'])
+        timestamps.append(d['timestamp'])
 
-    return gsr_signal, ppg_signal, heart_rate_signal, sampling_rate
+    return gsr_signal, ppg_signal, heart_rate_signal, sampling_rate, timestamps
 
 
 async def get_sampling_freq(dataManager, window_seconds):
@@ -263,7 +263,7 @@ async def get_sampling_freq(dataManager, window_seconds):
     return sampling_freq, window_samples
 
 
-async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Event):
+async def data_processing(dataManager, websocketManager, window_seconds, overlap, stopEvent: asyncio.Event):
     '''
     Read the first line and get the sampling frequency. Then define the dimension of the window and starts receiving stream data
     :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
@@ -271,8 +271,7 @@ async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Even
     :param stopEvent: event called by the main thread to block the execution of
     :return:
     '''
-    window_seconds = 15
-    overlap = 0.5
+
     try:
 
         sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
@@ -284,34 +283,36 @@ async def data_processing(dataManager, websocketManager, stopEvent: asyncio.Even
         await asyncio.sleep(window_seconds) # Wait for first window to be filled
 
         # Create dataLog files
-        data_logger = DataLogger("../Log/")
+        data_logger = DataLogger("./ExperimentsLog/")
 
         async for _ in ticker(window_seconds): # Fires prediction every time a window is available
             if stopEvent.is_set():
                 print("Exiting data streaming...")
                 break
 
-            slider.tick() # TODO: Remove, test only
+            #slider.tick() # TODO: Remove, test only
 
             # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
             read_list = dataManager.read_window_overlap(window_samples, overlap)
 
             if read_list and len(read_list) > 0:
                 # Call the function to elaborate the signal window
-                gsr_window, _, _, timestamp_window = extract_signals_from_dict(read_list)
+                gsr_window, _, _, _, timestamp_window = extract_signals_from_dict(read_list)
                 # Write entire window to log file
                 for gsr, timestamp in zip(gsr_window, timestamp_window):
                     data_logger.add_raw(gsr, timestamp)
 
-                await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
-                prediction = apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
-                #await unity_stream(prediction, websocketManager)
+                #await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
+                prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                await unity_stream(prediction, websocketManager)
+
+        data_logger.close()
     except Exception as e:
         raise e
 
 
 
-def apply_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
     """
     Takes the window signal, applies preprocessing to it, and returns the prediction result
     :param signal_window:
@@ -329,10 +330,15 @@ def apply_model(signal_window, sampling_freq, signal_preprocess, data_logger=Non
         if not success:
             raise RuntimeError("Could not encode image")
 
+
         files = {'file': ('scalogram.png', encoded_png.tobytes(), 'image/png')}
         url = "http://localhost:8000/predict"
-        resp = requests.post(url, files=files)
-
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "http://localhost:8000/predict",
+                files=files,
+                timeout=2.0
+            )
         if resp.status_code == 200:
             data = resp.json()
             if data_logger:
@@ -415,4 +421,7 @@ def dataset_forward_pass_test():
             print(f"{idx} Prediction: {prediction} \n")
             idx += 1
 
-scalogram_test()
+
+
+
+#dataset_forward_pass_test()

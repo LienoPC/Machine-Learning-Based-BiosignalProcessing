@@ -8,8 +8,22 @@ from multiprocessing import Process
 from threading import Lock
 from contextlib import asynccontextmanager
 
+
+
+import logging
+
+class ExcludePredictFilter(logging.Filter):
+    def filter(self, record):
+        return "/predict" not in record.getMessage()
+
+# Grab the access‐log logger and add our filter
+logging.getLogger("uvicorn.access").addFilter(ExcludePredictFilter())
+
+
+
 from PIL import Image
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+from fastapi.concurrency import run_in_threadpool
 import uvicorn
 from pydantic import BaseModel
 from zeroconf import ServiceInfo, Zeroconf
@@ -22,10 +36,9 @@ from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
 from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test
 from Server.UnityStream import stream_mockup, respond_to_discovery
+import logging
 
 
-# Log File Path
-log_file = "Log/Stream.txt"
 # Biosensor API exe
 biosensor_api = "./ShimmerAPI/ShimmerInterface.exe"
 
@@ -33,11 +46,16 @@ manager = ConnectionManager()
 data_task: asyncio.Task | None = None
 
 # Create predictor object
-MODEL_NAME = "densenet121"
-CHECKPOINT_PATH = "./Model/SavedModels/densenet121_differential_100.pt"
+MODEL_NAME = "resnet50"
+CHECKPOINT_PATH = "./Model/SavedModels/resnet50_whole_100.pt"
 DEVICE = "cuda"
 
-predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE)
+predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=False)
+
+# Global parameters
+window_seconds = 15
+overlap = 0.5
+
 
 # Pydantic response model
 class Prediction(BaseModel):
@@ -54,6 +72,7 @@ async def lifespan(app: FastAPI):
     app.state.stop_event.set()
 
 
+logging.getLogger("uvicorn.access").disabled = True
 # Websocket application listening and sending data stream
 websocketApp = FastAPI(lifespan=lifespan)
 @websocketApp.websocket("/ws/ss")
@@ -81,7 +100,7 @@ async def sensor_in_stream(websocket: WebSocket):
             timestamp = datetime.datetime.now()
 
             obj = {"heart_rate": heart_rate, "gsr": gsr, "ppg": ppg, "sample_rate": sample_rate, "timestamp": timestamp}
-            print("Received data: {}".format(data))
+            #print("Received data: {}".format(data))
 
             data_manager.push_single(obj)
 
@@ -110,7 +129,7 @@ async def model_stream(websocket: WebSocket):
     stop = websocketApp.state.stop_event
     stop.clear()
     try:
-        await data_processing(data_manager, manager, stop)
+        await data_processing(data_manager, manager, window_seconds, overlap, stop)
     except WebSocketDisconnect:
         print("Application client disconnected, closing connection...\n")
     except Exception as exc:
@@ -124,14 +143,13 @@ async def model_stream(websocket: WebSocket):
 async def predict(file: UploadFile = File(...)):
     if file.content_type.split("/")[0] != "image":
         raise HTTPException(status_code=415, detail="Unsupported file type")
-
     image = await file.read()
     try:
         img = Image.open(io.BytesIO(image)).convert("RGB")
     except Exception:
         raise HTTPException(status_code=400, detail="Cannot open image")
 
-    prob, label = predictor.predict(img)
+    prob, label = await run_in_threadpool(predictor.predict, img)
     return Prediction(probability=prob, label=label)
 
 def get_service_info(service_name, stream_id, port):
@@ -222,13 +240,12 @@ async def main():
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
-    #api_token = asyncio.Event()
-    #api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
+    api_token = asyncio.Event()
+    api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
 
     # Start for the first time the discovery of external connection requests to the unity websocket
-    await asyncio.sleep(10)
-    print("Executing forward pass")
-    dataset_forward_pass_test()
+    #await asyncio.sleep(10)
+    #dataset_forward_pass_test()
     # Test code to maintain the server active
     try:
         info_unity = get_service_info("unitybiosignal_stream", "ubs", 8000)
@@ -236,8 +253,8 @@ async def main():
 
     finally:
         # Terminate biosensor api
-        #api_token.set()
-        #await api_task
+        api_token.set()
+        await api_task
         # Stop webserver services from being advertised
         zeroconf_sensor, info_sensor = await sensor_stream
         await zeroconf_sensor.async_unregister_service(info_sensor)

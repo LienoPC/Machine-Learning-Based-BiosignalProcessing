@@ -185,7 +185,7 @@ class SignalPreprocess():
         return norm_specs
 
 
-    def compute_morlet_cwt(self, raw_signal, fs, num_scales=12, freq_min=0.5, freq_max=6, w=6.0):
+    def compute_morlet_cwt(self, raw_signal, fs, num_scales=32, freq_min=0.5, freq_max=3, w=6.0):
         '''
         Compute the continuous wavelet transform (using morlet wavelets)
         :param raw_signal: 1D Array of input signal
@@ -247,7 +247,7 @@ class SignalPreprocess():
 
         return rgb_img
 
-    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=4):
+    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=3):
         #epoch_data = self.apply_bandpass_filter(epoch_data)
         wavelet = pywt.ContinuousWavelet('cmor1.0-1.5')
         freqs = np.linspace(freq_min, freq_max, num_scales)
@@ -288,7 +288,7 @@ class SignalPreprocess():
             elif factor == 16:
                 stages = [4, 4]
             if len(stages) > 0:
-                res_epoch = epoch_data
+                res_epoch = final_signal
                 for q in stages:
                     res_epoch = decimate(res_epoch, q=q, ftype='iir', zero_phase=True)
                 return res_epoch
@@ -320,7 +320,8 @@ class SignalPreprocess():
         os.makedirs(output_folder, exist_ok=True)
         os.makedirs(output_folder + "/Plots", exist_ok=True)
 
-        final_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')
+        #final_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')
+        final_signal = nk.signal_filter(raw_signal, sampling_rate=self.fs, lowcut=0.2, highcut=1.8, method='butterworth', order=8) # Used for already resampled signal
         img_list_path = []
         #fname = os.path.join(output_folder, f"Plots/Entire.png")
         #plot_signal(raw_signal, fname)

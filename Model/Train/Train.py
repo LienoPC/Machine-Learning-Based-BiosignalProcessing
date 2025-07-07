@@ -10,7 +10,7 @@ from torchmetrics.classification import BinaryF1Score
 
 model_file_path = "./Log/Train"
 
-def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, num_epochs=100, device='cuda', lr_decay=None):
+def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, num_epochs=300, device='cuda', lr_decay=None):
     """
     Support function for model training.
 
@@ -75,6 +75,7 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
 
+
             if phase == 'train' and lr_decay:
                 lr_decay.step()
 
@@ -101,7 +102,7 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
     best_f1_idx = torch.argmax(f1_curve)
     best_f1 = f1_curve[best_f1_idx].item()
     best_threshold = thresholds[best_f1_idx].item()
-    store_f1_curve(model_name, best_f1)
+    store_f1_curve(model_name, f1_curve)
     print(f"Best f1 score: {best_f1:4f} with threshold {best_threshold}")
 
     # Load best model weights
