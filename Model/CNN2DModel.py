@@ -18,15 +18,15 @@ from Model.Train.Train import train_loop
 
 
 # Array of all transfer learning modes to try with the associated learning rates
-transfer_modes = [('differential', (0.0001, 0.001))]
-models = ['mobilenetv4_conv_large']
+transfer_modes = [('whole', 0.0001), ('differential', (0.0001, 0.001))]
+models = ['resnet50']
 def main_transfer_learning():
 
     ## Data loading
     img_size = 224 # The network takes 224x224x3
 
-    mean = [0.0629, 0.2021, 0.7622]
-    std = [0.1971, 0.3228, 0.2276]
+    mean = [0.0749, 0.2367, 0.7743]
+    std = [0.2161, 0.3411, 0.2410]
 
     # Load dataset
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
@@ -39,7 +39,7 @@ def main_transfer_learning():
     valid_set = SignalImageDataset(valid_img_list, valid_label_list, transform.get_transform())
 
     # Batch size
-    batch_size = 64
+    batch_size = 128
 
     # Compute sampler for class rebalancing
     train_sampler = get_weighted_random_sampler(train_label_list)
@@ -158,6 +158,6 @@ def create_dataset_():
     mean, std = SignalImageDataset.compute_mean_std(entire_dataloader)
 
 
-
+#subdivide_dataset('./Dataset/Data/WESAD/', 'WESAD_filtered.csv', './Dataset')
 #create_dataset_()
 #main_transfer_learning()

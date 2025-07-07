@@ -23,12 +23,12 @@ metrics_header = ['model_name', 'loss', 'accuracy', 'precision', 'recall', 'f1-s
 
 num_classes = 1
 def test():
-    model_name = "mobilenetv4_conv_large"
-    model_path = "./Log/Saved/3/mobilenetv4_conv_large_differential/mobilenetv4_conv_large_differential_100.pt"
+    model_name = "resnet50"
+    model_path = "./Log/Saved/WESAD_MaxFreq_3_Filtered_15s/resnet50_differential/resnet50_differential_100.pt"
 
     init_test_csv(model_name)
-    mean = [0.0657, 0.2120, 0.7650]
-    std = [0.1999, 0.3295, 0.2286]
+    mean = [0.0749, 0.2367, 0.7743]
+    std = [0.2161, 0.3411, 0.2410]
 
     transform = ScalogramImageTransform(224, mean=mean, std=std)
 
@@ -43,7 +43,7 @@ def test():
     store_test(test_metrics, model_name)
 
 
-def test_function(model_name, model_path, test_loader, criterion, device="cuda", thresold=False):
+def test_function(model_name, model_path, test_loader, criterion, device="cuda", thresold=True):
     checkpoint = torch.load(model_path, map_location=device)
     model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -187,4 +187,4 @@ def store_pr_curve(pr_curve, path):
     plt.close()
 
 
-test()
+#test()
