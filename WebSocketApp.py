@@ -12,6 +12,9 @@ from contextlib import asynccontextmanager
 
 import logging
 
+import httpx
+
+
 class ExcludePredictFilter(logging.Filter):
     def filter(self, record):
         return "/predict" not in record.getMessage()
@@ -37,7 +40,7 @@ from Utility.DataQueueManager import DataQueueManager
 from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test
 from Server.UnityStream import stream_mockup, respond_to_discovery
 import logging
-
+import threading
 
 # Biosensor API exe
 biosensor_api = "./ShimmerAPI/ShimmerInterface.exe"
@@ -46,8 +49,8 @@ manager = ConnectionManager()
 data_task: asyncio.Task | None = None
 
 # Create predictor object
-MODEL_NAME = "resnet50"
-CHECKPOINT_PATH = "./Model/SavedModels/resnet50_whole_100.pt"
+MODEL_NAME = "densenet121"
+CHECKPOINT_PATH = "./Model/SavedModels/densenet121_whole_100.pt"
 DEVICE = "cuda"
 
 predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=False)
@@ -72,9 +75,14 @@ async def lifespan(app: FastAPI):
     app.state.stop_event.set()
 
 
-logging.getLogger("uvicorn.access").disabled = True
+logging.getLogger("uvicorn.access").disabled = True # Suppress logging on prediction route
 # Websocket application listening and sending data stream
 websocketApp = FastAPI(lifespan=lifespan)
+
+@websocketApp.get("/health", include_in_schema=False)
+async def health_check():
+    return {"status": "ok"}
+
 @websocketApp.websocket("/ws/ss")
 async def sensor_in_stream(websocket: WebSocket):
     """
@@ -88,7 +96,7 @@ async def sensor_in_stream(websocket: WebSocket):
     stop = websocketApp.state.stop_event
     try:
         while not stop.is_set():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0)
             data = await websocket.receive_text()
 
             parsed_data = json.loads(data)
@@ -129,13 +137,14 @@ async def model_stream(websocket: WebSocket):
     stop = websocketApp.state.stop_event
     stop.clear()
     try:
-        await data_processing(data_manager, manager, window_seconds, overlap, stop)
+        def live_mock_predict(*args, **kwargs):
+            # just returns whatever the slider currently shows
+            return mock_slider_value
+        await data_processing(data_manager, manager, window_seconds, overlap, stop, live_mock_predict)
     except WebSocketDisconnect:
         print("Application client disconnected, closing connection...\n")
     except Exception as exc:
         print("Model processing stream error:", exc)
-    finally:
-        manager.disconnect(websocket)
 
 
 # Predict endpoint
@@ -221,6 +230,19 @@ async def launch_process(path, cancel_token):
     await stderr_task
 
 
+async def wait_for_health(url: str, timeout: float = 10.0, interval: float = 0.2):
+    deadline = asyncio.get_event_loop().time() + timeout
+    async with httpx.AsyncClient() as client:
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                r = await client.get(url)
+                if r.status_code == 200:
+                    return
+            except:
+                pass
+            await asyncio.sleep(interval)
+    raise TimeoutError(f"Health‐check failed at {url}")
+
 def run_server():
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
@@ -237,6 +259,10 @@ async def user_input_loop(info_unity):
 async def main():
     server_process = Process(target=run_server, args=())
     server_process.start()
+
+    # Wait server to effectively run
+    await wait_for_health("http://127.0.0.1:8000/health", timeout=15.0)
+
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
@@ -245,7 +271,7 @@ async def main():
 
     # Start for the first time the discovery of external connection requests to the unity websocket
     #await asyncio.sleep(10)
-    #dataset_forward_pass_test()
+    #await dataset_forward_pass_test()
     # Test code to maintain the server active
     try:
         info_unity = get_service_info("unitybiosignal_stream", "ubs", 8000)
@@ -264,6 +290,35 @@ async def main():
         server_process.terminate()
         server_process.join()
         print("Closing connection...")
+
+
+# this will hold 0 or 1, updated by the UI
+mock_slider_value = 0
+
+def start_mock_slider():
+    import tkinter as tk
+
+    def on_move(v):
+        # v is a string, convert to int
+        global mock_slider_value
+        mock_slider_value = int(v)
+
+    root = tk.Tk()
+    root.title("Mock Prediction Slider")
+    # slider from 0 to 1 (you can set any range)
+    scale = tk.Scale(root,
+                     from_=0, to=1,
+                     orient="horizontal",
+                     command=on_move,
+                     length=300,
+                     label="Prediction (0=NotStress,1=Stress)")
+    scale.pack(padx=20, pady=20)
+    # block here, runs in its own thread
+    root.mainloop()
+
+# start it once at import time (or in your startup logic)
+threading.Thread(target=start_mock_slider, daemon=True).start()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
