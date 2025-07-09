@@ -240,11 +240,11 @@ def extract_signals_from_dict(sensor_data_list):
 
     for sensor_data in sensor_data_list:
         d = sensor_data
-        gsr_signal.append(d['gsr'])
-        ppg_signal.append(d['ppg'])
-        heart_rate_signal.append(d['heart_rate'])
-        sampling_rate.append(d['sample_rate'])
-        timestamps.append(d['timestamp'])
+        gsr_signal.append(d.get('gsr', None))
+        ppg_signal.append(d.get('ppg', None))
+        heart_rate_signal.append(d.get('heart_rate', None))
+        sampling_rate.append(d.get('sample_rate', None))
+        timestamps.append(d.get('timestamp', None))
 
     return gsr_signal, ppg_signal, heart_rate_signal, sampling_rate, timestamps
 
@@ -263,7 +263,7 @@ async def get_sampling_freq(dataManager, window_seconds):
     return sampling_freq, window_samples
 
 
-async def data_processing(dataManager, websocketManager, window_seconds, overlap, stopEvent: asyncio.Event):
+async def data_processing(dataManager, websocketManager, window_seconds, overlap, stopEvent: asyncio.Event, predict_fn=None):
     '''
     Read the first line and get the sampling frequency. Then define the dimension of the window and starts receiving stream data
     :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
@@ -289,8 +289,8 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
             if stopEvent.is_set():
                 print("Exiting data streaming...")
                 break
-
-            #slider.tick() # TODO: Remove, test only
+            await asyncio.sleep(0.1)
+            #slider.tick()
 
             # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
             read_list = dataManager.read_window_overlap(window_samples, overlap)
@@ -302,9 +302,10 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
                 for gsr, timestamp in zip(gsr_window, timestamp_window):
                     data_logger.add_raw(gsr, timestamp)
 
-                #await unity_stream(apply_model_mock(read_list, slider.shared_var.get()), websocketManager)
-                prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
-                await unity_stream(prediction, websocketManager)
+                if predict_fn:
+                    await unity_stream(predict_fn(), websocketManager)
+                #prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                #await unity_stream(prediction, websocketManager)
 
         data_logger.close()
     except Exception as e:
@@ -352,7 +353,7 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
 
 
 
-def apply_model_mock(signal_window, mean_value):
+def apply_model_mock(mean_value):
     # ELABORATE SIGNAL WINDOW
     classification_res = biased_bit(mean_value)
     return classification_res
@@ -398,7 +399,7 @@ def scalogram_test():
             print(f"Saved at {fname}")
 
 
-def dataset_forward_pass_test():
+async def dataset_forward_pass_test():
 
     sensor_data_list, _ = parse_file_no_extract("./Model/Log/Stream/Stream.txt")
     epoch_length = 15
@@ -408,7 +409,7 @@ def dataset_forward_pass_test():
     epoch_samples = int(epoch_length * sampling_freq)
     hop = int(epoch_samples * (1 - overlap))
     if len(sensor_data_list):
-        gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
+        gsr, _, _, _, _ = extract_signals_from_dict(sensor_data_list)
 
         total = len(gsr)
         signal_preprocess = SignalPreprocess(4)
@@ -417,7 +418,7 @@ def dataset_forward_pass_test():
         for idx in range(n_epochs):
             start = idx * hop
             epoch = gsr[start:start + epoch_samples]
-            prediction = apply_model(epoch,sampling_freq, signal_preprocess)
+            prediction = await apply_model(epoch,sampling_freq, signal_preprocess)
             print(f"{idx} Prediction: {prediction} \n")
             idx += 1
 
