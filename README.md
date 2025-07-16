@@ -30,7 +30,7 @@ This project runs a WebSocket server that provides:
    pip install -r requirements.txt
    ```
 3. **Download your model checkpoint**
-   Put your .pt file under "Model/SavedModels/" and set _MODEL_NAME_ and _CHECKPOINT_PATH_ inside **WebSocketApp.py**
+   <br>Put your .pt file under "Model/SavedModels/" and set _MODEL_NAME_ and _CHECKPOINT_PATH_ variables inside **WebSocketApp.py**
 
 ## Usage
 
@@ -41,9 +41,9 @@ This project runs a WebSocket server that provides:
     uvicorn WebSocketApp:app --host 0.0.0.0 --port 8000
     ```
 2. **Start Client Application**
-   Any client application that uses **FLPlugin** can connect to the websocket _ws://<server>:8000/ws/ubs_ (on local network) to listen for classification results. For testing purpose you can use [Game-Kitchen Scenario](https://github.com/UCC-Multimedia/Pacing-Game-Kitchen-Scenario), a VR Unity App that already integrates a client endpoint.
+   <br>Any client application that uses **FLPlugin** can connect to the websocket _ws://server:8000/ws/ubs_ (on local network) to listen for classification results. [Game-Kitchen Scenario](https://github.com/UCC-Multimedia/Pacing-Game-Kitchen-Scenario) already integrates a client endpoint.
 3. **Start Discovery Loop**
-   Pressing _h_ will allow the server to send UDP packages in response to connection requests for _/ws/ubs_ route
+   <br>Pressing _h_ will allow the server to send UDP packages in response to connection requests for _/ws/ubs_ route
    
 ## Contact
 - Alberto Cagnazzo <s327678@studenti.polito.it>
