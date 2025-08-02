@@ -50,7 +50,7 @@ data_task: asyncio.Task | None = None
 
 # Create predictor object
 MODEL_NAME = "densenet121"
-CHECKPOINT_PATH = "./Model/SavedModels/densenet121_whole_100.pt"
+CHECKPOINT_PATH = "./Model/SavedModels/densenet121_differential_100.pt"
 DEVICE = "cuda"
 
 predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=False)
@@ -266,8 +266,8 @@ async def main():
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
-    api_token = asyncio.Event()
-    api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
+    #api_token = asyncio.Event()
+    #api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
 
     # Start for the first time the discovery of external connection requests to the unity websocket
     #await asyncio.sleep(10)
@@ -279,8 +279,8 @@ async def main():
 
     finally:
         # Terminate biosensor api
-        api_token.set()
-        await api_task
+        #api_token.set()
+        #await api_task
         # Stop webserver services from being advertised
         zeroconf_sensor, info_sensor = await sensor_stream
         await zeroconf_sensor.async_unregister_service(info_sensor)
@@ -292,7 +292,6 @@ async def main():
         print("Closing connection...")
 
 
-# this will hold 0 or 1, updated by the UI
 mock_slider_value = 0
 
 def start_mock_slider():
@@ -313,7 +312,6 @@ def start_mock_slider():
                      length=300,
                      label="Prediction (0=NotStress,1=Stress)")
     scale.pack(padx=20, pady=20)
-    # block here, runs in its own thread
     root.mainloop()
 
 # start it once at import time (or in your startup logic)

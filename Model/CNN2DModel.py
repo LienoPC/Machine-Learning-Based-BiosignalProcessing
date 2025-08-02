@@ -18,15 +18,15 @@ from Model.Train.Train import train_loop
 
 
 # Array of all transfer learning modes to try with the associated learning rates
-transfer_modes = [('whole', 0.0001), ('differential', (0.0001, 0.001))]
-models = ['resnet50']
+transfer_modes = [('whole', 0.001), ('differential', (0.001, 0.01))]
+models = ['densenet121']
 def main_transfer_learning():
 
     ## Data loading
     img_size = 224 # The network takes 224x224x3
 
-    mean = [0.0749, 0.2367, 0.7743]
-    std = [0.2161, 0.3411, 0.2410]
+    mean = [0.0701, 0.1922, 0.7458]
+    std = [0.2022, 0.3077, 0.2275]
 
     # Load dataset
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
@@ -160,4 +160,4 @@ def create_dataset_():
 
 #subdivide_dataset('./Dataset/Data/WESAD/', 'WESAD_filtered.csv', './Dataset')
 #create_dataset_()
-#main_transfer_learning()
+main_transfer_learning()
