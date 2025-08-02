@@ -274,38 +274,40 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
 
     try:
 
-        sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
-        if sampling_freq == 0:
-            raise ValueError("Data format is not valid. Cannot find sampling frequency.")
+        if not predict_fn:
+            sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
+            if sampling_freq == 0:
+                raise ValueError("Data format is not valid. Cannot find sampling frequency.")
 
         signal_preprocess = SignalPreprocess(4.0) # Create signal preprocess with 4Hz (the same frequency on which the model works)
-        slider = SliderWindow()
+
         await asyncio.sleep(window_seconds) # Wait for first window to be filled
 
         # Create dataLog files
         data_logger = DataLogger("./ExperimentsLog/")
-
         async for _ in ticker(window_seconds): # Fires prediction every time a window is available
             if stopEvent.is_set():
                 print("Exiting data streaming...")
                 break
             await asyncio.sleep(0.1)
-            #slider.tick()
 
-            # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
-            read_list = dataManager.read_window_overlap(window_samples, overlap)
 
-            if read_list and len(read_list) > 0:
-                # Call the function to elaborate the signal window
-                gsr_window, _, _, _, timestamp_window = extract_signals_from_dict(read_list)
-                # Write entire window to log file
-                for gsr, timestamp in zip(gsr_window, timestamp_window):
-                    data_logger.add_raw(gsr, timestamp)
+            if predict_fn: # TODO: Remove, test only
+                await unity_stream(predict_fn(), websocketManager)
+            else:
+                # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
+                read_list = dataManager.read_window_overlap(window_samples, overlap)
 
-                if predict_fn:
-                    await unity_stream(predict_fn(), websocketManager)
-                #prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
-                #await unity_stream(prediction, websocketManager)
+                if read_list and len(read_list) > 0:
+                    # Call the function to elaborate the signal window
+                    gsr_window, _, _, _, timestamp_window = extract_signals_from_dict(read_list)
+                    # Write entire window to log file
+                    for gsr, timestamp in zip(gsr_window, timestamp_window):
+                        data_logger.add_raw(gsr, timestamp)
+
+
+                    prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                    await unity_stream(prediction, websocketManager)
 
         data_logger.close()
     except Exception as e:

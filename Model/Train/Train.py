@@ -10,7 +10,7 @@ from torchmetrics.classification import BinaryF1Score
 
 model_file_path = "./Log/Train"
 
-def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, num_epochs=300, device='cuda', lr_decay=None):
+def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, num_epochs=100, device='cuda', lr_decay=None):
     """
     Support function for model training.
 
@@ -29,11 +29,15 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
 
     best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0.0
+    best_threshold = 0.5
     thresholds = torch.linspace(0, 1, steps=8)
     pr_curve = BinaryPrecisionRecallCurve(thresholds=thresholds).to(device)
     f1_curve = []
 
     model.to(device)
+    print(next(model.parameters()).device)
+    if torch.cuda.is_available():
+        print("CUDA is available:", torch.cuda.get_device_name(0))
     for epoch in range(num_epochs):
         print(f"Epoch {epoch}/{num_epochs - 1}")
         print("-" * 10)
@@ -90,6 +94,13 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
                 f1_curve = 2 * precision * recall / (precision + recall + 1e-8)
                 pr_curve.reset()
 
+                epoch_best_idx = torch.argmax(f1_curve)
+                epoch_best_f1 = f1_curve[epoch_best_idx].item()
+                epoch_best_threshold = thresholds[epoch_best_idx].item()
+
+                if epoch_acc > best_acc:
+                    best_threshold = epoch_best_threshold
+
             # Deep copy the best model
             if phase == 'valid' and epoch_acc > best_acc:
               best_acc = epoch_acc
@@ -99,11 +110,7 @@ def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_siz
     print(f"{model_name} training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s")
     print(f"{model_name} best val Acc: {best_acc:4f}")
 
-    best_f1_idx = torch.argmax(f1_curve)
-    best_f1 = f1_curve[best_f1_idx].item()
-    best_threshold = thresholds[best_f1_idx].item()
-    store_f1_curve(model_name, f1_curve)
-    print(f"Best f1 score: {best_f1:4f} with threshold {best_threshold}")
+    print(f"Best threshold computed: {best_threshold}")
 
     # Load best model weights
     model.load_state_dict(best_model_wts)

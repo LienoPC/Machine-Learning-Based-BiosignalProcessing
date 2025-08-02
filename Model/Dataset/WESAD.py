@@ -49,6 +49,8 @@ def remove_invalid_labels_from_dataset():
 
 def redefine_invalid_labels_from_dataset():
     df = pd.read_csv("Data/WESAD/WESAD.csv", header=None, names=["img", "label"])
+
+    df = df[(df["label"] != 0) & (df["label"] < 5)]
     df["label"] = np.where((df["label"] == 1) | (df["label"] > 2), 0, 1)
 
     print(len(df))

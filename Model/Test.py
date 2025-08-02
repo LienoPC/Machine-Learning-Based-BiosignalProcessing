@@ -11,6 +11,8 @@ from torchmetrics import ConfusionMatrix
 from torchmetrics.classification import (BinaryAccuracy, BinaryPrecision, BinaryRecall, BinaryF1Score, BinaryAUROC, BinaryPrecisionRecallCurve)
 from Model.CNN2DModel import SignalImageDataset, get_dataset_lists
 import seaborn as sns
+from sklearn.metrics import auc
+
 import torchvision.transforms as transforms
 
 from Model.Dataset.SignalImageDataset import ScalogramImageTransform
@@ -24,11 +26,11 @@ metrics_header = ['model_name', 'loss', 'accuracy', 'precision', 'recall', 'f1-s
 num_classes = 1
 def test():
     model_name = "resnet50"
-    model_path = "./Log/Saved/WESAD_MaxFreq_3_Filtered_15s/resnet50_differential/resnet50_differential_100.pt"
+    model_path = "./Log/Saved/WESAD_MaxFreq_4_5s/resnet50_differential/resnet50_differential_100.pt"
 
     init_test_csv(model_name)
-    mean = [0.0749, 0.2367, 0.7743]
-    std = [0.2161, 0.3411, 0.2410]
+    mean = [0.1169, 0.2582, 0.7433]
+    std = [0.2549, 0.3349, 0.2655]
 
     transform = ScalogramImageTransform(224, mean=mean, std=std)
 
@@ -39,11 +41,11 @@ def test():
 
     criterion = nn.BCEWithLogitsLoss()
 
-    test_metrics = test_function(model_name, model_path, test_dataloader, criterion, thresold=True)
+    test_metrics = test_function(model_name, model_path, test_dataloader, criterion, threshold=False)
     store_test(test_metrics, model_name)
 
 
-def test_function(model_name, model_path, test_loader, criterion, device="cuda", thresold=True):
+def test_function(model_name, model_path, test_loader, criterion, device="cuda", threshold=True):
     checkpoint = torch.load(model_path, map_location=device)
     model = timm.create_model(model_name, pretrained=True, num_classes=num_classes)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -53,7 +55,7 @@ def test_function(model_name, model_path, test_loader, criterion, device="cuda",
     print("Best Threshold: ", best_threshold)
 
     # Define all metrics using the "best_threshold" computed during validation
-    if thresold:
+    if threshold:
         acc_metric = BinaryAccuracy(threshold=best_threshold).to(device)
         prec_metric = BinaryPrecision(threshold=best_threshold).to(device)
         rec_metric = BinaryRecall(threshold=best_threshold).to(device)
@@ -171,16 +173,18 @@ def store_pr_curve(pr_curve, path):
         alpha=0.2
     )
 
+    auc_pr = auc(recall_vals.cpu(), precision_vals.cpu())
+
     plt.xlabel('Recall')
     plt.ylabel('Precision')
-    plt.title(f'Precision–Recall curve (AUC = {torch.trapz(precision_vals, recall_vals):.3f})')
+    plt.title(f'Precision–Recall curve (AUC = {auc_pr:.3f})')
 
     f1_vals = 2 * (precision_vals * recall_vals) / (precision_vals + recall_vals + 1e-8)
     f1_vals_np = f1_vals.detach().cpu().numpy()
     best_idx = int(np.nanargmax(f1_vals_np))
 
     best_r, best_p, best_thresh = (recall_vals[best_idx], precision_vals[best_idx], thresholds[best_idx])
-    plt.scatter(best_r.cpu(), best_p.cpu(), marker='o', label=f'Best F1 @ {best_thresh:.2f}')
+    plt.scatter(best_r.cpu(), best_p.cpu(), marker='o', label=f'Best F1: {best_thresh:.2f}')
     plt.legend()
 
     plt.savefig(path, dpi=300, bbox_inches='tight')

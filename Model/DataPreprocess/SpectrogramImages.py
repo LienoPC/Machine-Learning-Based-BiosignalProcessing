@@ -247,7 +247,7 @@ class SignalPreprocess():
 
         return rgb_img
 
-    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=3):
+    def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=12, freq_min=0.5, freq_max=4):
         #epoch_data = self.apply_bandpass_filter(epoch_data)
         wavelet = pywt.ContinuousWavelet('cmor1.0-1.5')
         freqs = np.linspace(freq_min, freq_max, num_scales)
