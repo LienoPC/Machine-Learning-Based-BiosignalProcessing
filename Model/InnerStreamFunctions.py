@@ -5,6 +5,8 @@ import random
 import re
 
 import cv2
+import matplotlib.pyplot as plt
+import neurokit2
 import numpy as np
 
 import pandas as pd
@@ -13,9 +15,10 @@ from pydantic import BaseModel
 from scipy.signal import resample_poly
 
 from Server.UnityStream import unity_stream
+from Utility.AvroReader import read_and_plot
 from Utility.DataLog import DataLogger
 from Utility.SliderWindow import SliderWindow
-from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
+from Model.DataPreprocess.SpectrogramImages import SignalPreprocess, plot_signal, plot_signal_nosave
 from fractions import Fraction
 import httpx
 from scipy.signal import decimate
@@ -239,7 +242,7 @@ def extract_signals_from_dict(sensor_data_list):
     timestamps = []
 
     for sensor_data in sensor_data_list:
-        d = sensor_data
+        d = sensor_data.dict()
         gsr_signal.append(d.get('gsr', None))
         ppg_signal.append(d.get('ppg', None))
         heart_rate_signal.append(d.get('heart_rate', None))
@@ -279,7 +282,7 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
             if sampling_freq == 0:
                 raise ValueError("Data format is not valid. Cannot find sampling frequency.")
 
-        signal_preprocess = SignalPreprocess(4.0) # Create signal preprocess with 4Hz (the same frequency on which the model works)
+        signal_preprocess = SignalPreprocess(25) # Create signal preprocess with 4Hz (the same frequency on which the model works)
 
         await asyncio.sleep(window_seconds) # Wait for first window to be filled
 
@@ -325,9 +328,19 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
     """
     try:
         timestamp = datetime.datetime.now()
-        # Resample to 4Hz
+        # Resample to correct frequency
         clean_signal = signal_preprocess.clean_epoch(signal_window, sampling_freq)
+        #clean_signal = neurokit2.eda.eda_clean(signal_window, sampling_rate=4)
         scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
+        '''
+        plt.imshow(scalogram_image)
+        plt.axis("off")
+        plt.show()
+        plt.pause(0.1)
+        plt.close()
+        '''
+
+
         # Encode image
         success, encoded_png = cv2.imencode('.png', scalogram_image)
         if not success:
@@ -338,7 +351,7 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
         url = "http://localhost:8000/predict"
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8000/predict",
+                url,
                 files=files,
                 timeout=2.0
             )
@@ -346,6 +359,55 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
             data = resp.json()
             if data_logger:
                 data_logger.add_prediction(data['label'], scalogram_image, timestamp)
+            return data['label']
+        else:
+            raise Exception("Error", resp.status_code, resp.text)
+    except Exception as e:
+        raise e
+
+async def apply_spectrogram_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+    """
+    Takes the window signal, applies preprocessing to it, and returns the prediction result
+    :param signal_window:
+    :param signal_preprocess:
+    :param data_logger:
+    :return:
+    """
+    try:
+        timestamp = datetime.datetime.now()
+        # Resample to correct frequency
+        clean_signal = signal_preprocess.clean_epoch(signal_window, sampling_freq)
+        #clean_signal = neurokit2.eda.eda_clean(signal_window, sampling_rate=4)
+        spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(clean_signal, lowfreq=0.5, highfreq=12)
+        '''
+        plt.imshow(spectrogram_image)
+        plt.axis("off")
+        plt.show()
+        plt.pause(0.1)
+        plt.close()
+        '''
+
+
+
+
+        # Encode image
+        success, encoded_png = cv2.imencode('.png', spectrogram_image)
+        if not success:
+            raise RuntimeError("Could not encode image")
+
+
+        files = {'file': ('scalogram.png', encoded_png.tobytes(), 'image/png')}
+        url = "http://localhost:8000/predict"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                files=files,
+                timeout=2.0
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data_logger:
+                data_logger.add_prediction(data['label'], spectrogram_image, timestamp)
             return data['label']
         else:
             raise Exception("Error", resp.status_code, resp.text)
@@ -382,10 +444,10 @@ def scalogram_test():
     first_line = sensor_data_list[0]
     sampling_freq = first_line.sample_rate
     if len(sensor_data_list):
-        gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
+        gsr, _, _, _, _ = extract_signals_from_dict(sensor_data_list)
 
         total = len(gsr)
-        signal_preprocess = SignalPreprocess(4)
+        signal_preprocess = SignalPreprocess(32)
         epoch_samples = int(epoch_length * sampling_freq)
         hop = int(epoch_samples * (1 - overlap))
         n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
@@ -395,7 +457,7 @@ def scalogram_test():
             start = idx * hop
             epoch = gsr[start:start + epoch_samples]
             clean_signal = signal_preprocess.clean_epoch(epoch, sampling_freq)
-            scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
+            scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal, num_scales=32, freq_min=0.5, freq_max=8)
             fname = "./Log/Stream/Images/" + f"epoch_{idx}.png"
             cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
             print(f"Saved at {fname}")
@@ -410,6 +472,8 @@ async def dataset_forward_pass_test():
     sampling_freq = first_line.sample_rate
     epoch_samples = int(epoch_length * sampling_freq)
     hop = int(epoch_samples * (1 - overlap))
+
+    predictions = []
     if len(sensor_data_list):
         gsr, _, _, _, _ = extract_signals_from_dict(sensor_data_list)
 
@@ -420,11 +484,44 @@ async def dataset_forward_pass_test():
         for idx in range(n_epochs):
             start = idx * hop
             epoch = gsr[start:start + epoch_samples]
-            prediction = await apply_model(epoch,sampling_freq, signal_preprocess)
-            print(f"{idx} Prediction: {prediction} \n")
+            prediction = await apply_model(epoch, sampling_freq, signal_preprocess)
+            predictions.append(prediction)
+            idx += 1
+
+    plot_signal_nosave(predictions, title="Predicted value",
+                        xlabel="Time Samples", ylabel="Prediction")
+
+
+async def embrace_forward_pass_plot():
+    dir_path = "Utility/EmbraceData/AlessandroVisconti/StressScenario/"
+    sampling_freq = 4
+
+    gsr_array = read_and_plot(["Utility/csv/1-1-0_1753974072.avro.csv"],
+                        "2025-07-31 17:17:00.031178", "2025-07-31 17:27:00.715103", dir_path, sampling_freq, False)
+    eps = 1e-6
+    gsr_array = 100/(gsr_array + eps)
+    #gsr_array = resample_poly(gsr_array, up=sampling_freq, down=4)
+    epoch_length = 15
+    overlap = 0.5
+    epoch_samples = int(epoch_length * sampling_freq)
+    hop = int(epoch_samples * (1 - overlap))
+
+    predictions = []
+    if len(gsr_array):
+
+        total = len(gsr_array)
+        signal_preprocess = SignalPreprocess(sampling_freq)
+        n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
+
+        for idx in range(n_epochs):
+            start = idx * hop
+            epoch = gsr_array[start:start + epoch_samples]
+            prediction = await apply_model(epoch, sampling_freq, signal_preprocess)
+            predictions.append(prediction)
             idx += 1
 
 
-
+    plot_signal(predictions, os.path.join(dir_path, "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
 
 #dataset_forward_pass_test()
+#scalogram_test()

@@ -7,21 +7,14 @@ import time
 from multiprocessing import Process
 from threading import Lock
 from contextlib import asynccontextmanager
-
-
-
 import logging
-
 import httpx
-
 
 class ExcludePredictFilter(logging.Filter):
     def filter(self, record):
         return "/predict" not in record.getMessage()
 
-# Grab the access‐log logger and add our filter
 logging.getLogger("uvicorn.access").addFilter(ExcludePredictFilter())
-
 
 
 from PIL import Image
@@ -37,7 +30,7 @@ from zeroconf.asyncio import AsyncZeroconf
 from Model.Predictor import Predictor
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
-from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test
+from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test, embrace_forward_pass_plot
 from Server.UnityStream import stream_mockup, respond_to_discovery
 import logging
 import threading
@@ -49,12 +42,16 @@ manager = ConnectionManager()
 data_task: asyncio.Task | None = None
 
 # Create predictor object
-MODEL_NAME = "densenet121"
-CHECKPOINT_PATH = "./Model/SavedModels/densenet121_differential_100.pt"
+MODEL_NAME = "resnet50"
+CHECKPOINT_PATH = "./Model/SavedModels/resnet50_whole_100.pt"
 DEVICE = "cuda"
 
-predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=False)
+predictor = None
 
+def create_predictor():
+    global predictor
+    if predictor is None:
+        predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=True)
 # Global parameters
 window_seconds = 15
 overlap = 0.5
@@ -71,11 +68,12 @@ async def lifespan(app: FastAPI):
     app.state.stop_event = asyncio.Event()
     mult_man = multiprocessing.Manager()
     app.state.data_manager = DataQueueManager(mult_man.list())
+    create_predictor()
     yield
     app.state.stop_event.set()
 
 
-logging.getLogger("uvicorn.access").disabled = True # Suppress logging on prediction route
+logging.getLogger("uvicorn.access").disabled = True
 # Websocket application listening and sending data stream
 websocketApp = FastAPI(lifespan=lifespan)
 
@@ -138,7 +136,6 @@ async def model_stream(websocket: WebSocket):
     stop.clear()
     try:
         def live_mock_predict(*args, **kwargs):
-            # just returns whatever the slider currently shows
             return mock_slider_value
         await data_processing(data_manager, manager, window_seconds, overlap, stop, live_mock_predict)
     except WebSocketDisconnect:
@@ -167,7 +164,6 @@ def get_service_info(service_name, stream_id, port):
     service_type = "_ws._tcp.local."
     full_service_name = f"{service_name}.{service_type}"
 
-    # Add properties such as the stream identifier and the endpoint path
     properties = {
         "stream": stream_id,  # Stream identifier
         "path": f"/ws/{stream_id}"  # Path for the WebSocket endpoint
@@ -230,7 +226,7 @@ async def launch_process(path, cancel_token):
     await stderr_task
 
 
-async def wait_for_health(url: str, timeout: float = 10.0, interval: float = 0.2):
+async def wait_for_health(url: str, timeout: float = 20.0, interval: float = 0.2):
     deadline = asyncio.get_event_loop().time() + timeout
     async with httpx.AsyncClient() as client:
         while asyncio.get_event_loop().time() < deadline:
@@ -262,7 +258,7 @@ async def main():
 
     # Wait server to effectively run
     await wait_for_health("http://127.0.0.1:8000/health", timeout=15.0)
-
+    threading.Thread(target=start_mock_slider, daemon=True).start()
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
@@ -270,8 +266,8 @@ async def main():
     #api_task = asyncio.create_task(launch_process(biosensor_api, api_token))
 
     # Start for the first time the discovery of external connection requests to the unity websocket
-    #await asyncio.sleep(10)
-    #await dataset_forward_pass_test()
+    await asyncio.sleep(10)
+    await embrace_forward_pass_plot()
     # Test code to maintain the server active
     try:
         info_unity = get_service_info("unitybiosignal_stream", "ubs", 8000)
@@ -304,7 +300,7 @@ def start_mock_slider():
 
     root = tk.Tk()
     root.title("Mock Prediction Slider")
-    # slider from 0 to 1 (you can set any range)
+    # slider from 0 to 1
     scale = tk.Scale(root,
                      from_=0, to=1,
                      orient="horizontal",
@@ -314,8 +310,6 @@ def start_mock_slider():
     scale.pack(padx=20, pady=20)
     root.mainloop()
 
-# start it once at import time (or in your startup logic)
-threading.Thread(target=start_mock_slider, daemon=True).start()
 
 
 if __name__ == "__main__":
