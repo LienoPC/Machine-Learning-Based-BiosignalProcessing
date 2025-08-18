@@ -286,11 +286,11 @@ class SignalPreprocess():
 
         return scalogram_image
 
-    def clean_epoch(self, epoch_data, fs_data):
+    def resample_epoch(self, epoch_data, fs_data):
         if fs_data == self.fs:
+            print("\nSkipping resampling: sampling frequency matches\n")
             return epoch_data
 
-        final_signal = np.asarray(nk.eda_clean(epoch_data, sampling_rate=fs_data, method='neurokit'))
         final_signal = epoch_data
         # Resample data to model frequency
         if fs_data > self.fs and float.is_integer(fs_data/self.fs):
@@ -315,6 +315,17 @@ class SignalPreprocess():
             res_epoch = resample_poly(final_signal, up=fs_data, down=self.fs)
             return res_epoch
 
+
+    def preprocess_signal(self, epoch_data):
+        # Apply padding to remove edge-related problems
+        pad_samples = len(epoch_data)
+        padded = np.pad(epoch_data, (pad_samples, pad_samples), mode='reflect')
+        # Extract SCR (Skin Conductance Response)
+        scr_signal = nk.eda_phasic(padded, self.fs)
+        scr_signal = np.asarray(scr_signal["EDA_Phasic"])
+        center = scr_signal[pad_samples: pad_samples + len(epoch_data)]
+        return center
+
     def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=15, overlap=0.5, output_folder='Log/output_scalograms', additional_path='Dataset'):
         """
         Creates a folder of scalogram images starting from a raw signal. Used for dataset preprocessing
@@ -334,7 +345,7 @@ class SignalPreprocess():
         total = len(raw_signal)
         n_epochs = int(np.floor((total-epoch_samples)/hop) + 1)
         os.makedirs(output_folder, exist_ok=True)
-        os.makedirs(output_folder + "/Plots", exist_ok=True)
+        #os.makedirs(output_folder + "/Plots", exist_ok=True)
 
         final_signal = raw_signal
         #final_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')

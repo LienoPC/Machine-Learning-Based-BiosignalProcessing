@@ -309,7 +309,7 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
                         data_logger.add_raw(gsr, timestamp)
 
 
-                    prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                    prediction = await apply_cnn_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
                     await unity_stream(prediction, websocketManager)
 
         data_logger.close()
@@ -318,7 +318,7 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
 
 
 
-async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+async def apply_cnn_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
     """
     Takes the window signal, applies preprocessing to it, and returns the prediction result
     :param signal_window:
@@ -329,20 +329,19 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
     try:
         timestamp = datetime.datetime.now()
         # Resample to correct frequency
-        clean_signal = signal_preprocess.clean_epoch(signal_window, sampling_freq)
-        #clean_signal = neurokit2.eda.eda_clean(signal_window, sampling_rate=4)
-        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
-        '''
-        plt.imshow(scalogram_image)
-        plt.axis("off")
-        plt.show()
-        plt.pause(0.1)
-        plt.close()
-        '''
+
+        resampled_signal = signal_preprocess.resample_epoch(signal_window, sampling_freq)
+
+        scr_signal = signal_preprocess.preprocess_signal(resampled_signal)
+        #scr_signal = neurokit2.signal_filter(scr_signal, sampling_rate=signal_preprocess.fs, lowcut=0.0005, highcut=1.9)
+        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(scr_signal)
+
 
 
         # Encode image
-        success, encoded_png = cv2.imencode('.png', scalogram_image)
+        scalogram_bgr = cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR)
+
+        success, encoded_png = cv2.imencode('.png', scalogram_bgr)
         if not success:
             raise RuntimeError("Could not encode image")
 
@@ -353,12 +352,48 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
             resp = await client.post(
                 url,
                 files=files,
-                timeout=2.0
+                timeout=10.0
             )
         if resp.status_code == 200:
             data = resp.json()
             if data_logger:
                 data_logger.add_prediction(data['label'], scalogram_image, timestamp)
+            return data['label']
+        else:
+            raise Exception("Error", resp.status_code, resp.text)
+    except Exception as e:
+        raise e
+
+
+async def apply_ml_models(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+    """
+    Takes the window signal, applies preprocessing to it, and returns the prediction result
+    :param signal_window:
+    :param signal_preprocess:
+    :param data_logger:
+    :return:
+    """
+    try:
+        timestamp = datetime.datetime.now()
+        #signal_window = signal_preprocess.clean_epoch(signal_window, sampling_freq)
+        #signal_window = np.asarray(neurokit2.signal_filter(signal_window, sampling_rate=sampling_freq, lowcut=0.2, highcut=8, method='butterworth', order=8))
+        window_list = [float(x) for x in signal_window.tolist()]
+
+        payload = {
+            "window": window_list,
+            "sampling_rate": int(sampling_freq)
+        }
+        url = "http://localhost:8000/predict_ml"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                timeout=15.0
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data_logger:
+                data_logger.add_prediction_ml(data['label'], timestamp)
             return data['label']
         else:
             raise Exception("Error", resp.status_code, resp.text)
@@ -376,7 +411,7 @@ async def apply_spectrogram_model(signal_window, sampling_freq, signal_preproces
     try:
         timestamp = datetime.datetime.now()
         # Resample to correct frequency
-        clean_signal = signal_preprocess.clean_epoch(signal_window, sampling_freq)
+        clean_signal = signal_preprocess.resample_epoch(signal_window, sampling_freq)
         #clean_signal = neurokit2.eda.eda_clean(signal_window, sampling_rate=4)
         spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(clean_signal, lowfreq=0.5, highfreq=12)
         '''
@@ -445,7 +480,6 @@ def scalogram_test():
     sampling_freq = first_line.sample_rate
     if len(sensor_data_list):
         gsr, _, _, _, _ = extract_signals_from_dict(sensor_data_list)
-
         total = len(gsr)
         signal_preprocess = SignalPreprocess(32)
         epoch_samples = int(epoch_length * sampling_freq)
@@ -456,7 +490,7 @@ def scalogram_test():
         for idx in range(n_epochs):
             start = idx * hop
             epoch = gsr[start:start + epoch_samples]
-            clean_signal = signal_preprocess.clean_epoch(epoch, sampling_freq)
+            clean_signal = signal_preprocess.resample_epoch(epoch, sampling_freq)
             scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal, num_scales=32, freq_min=0.5, freq_max=8)
             fname = "./Log/Stream/Images/" + f"epoch_{idx}.png"
             cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
@@ -467,24 +501,30 @@ async def dataset_forward_pass_test():
 
     sensor_data_list, _ = parse_file_no_extract("./Model/Log/Stream/Stream.txt")
     epoch_length = 15
-    overlap = 0.5
+    overlap = 0.2
     first_line = sensor_data_list[0]
     sampling_freq = first_line.sample_rate
+
+    print(f"Read sampling freq: {sampling_freq}")
     epoch_samples = int(epoch_length * sampling_freq)
     hop = int(epoch_samples * (1 - overlap))
-
+    eps = 1e-6
     predictions = []
     if len(sensor_data_list):
         gsr, _, _, _, _ = extract_signals_from_dict(sensor_data_list)
+        gsr = np.asarray(gsr)
 
+        eda_signals, info = neurokit2.eda_process(gsr, sampling_rate=int(sampling_freq))
+        neurokit2.eda_plot(eda_signals, info)
+        plt.show()
         total = len(gsr)
         signal_preprocess = SignalPreprocess(4)
         n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
 
         for idx in range(n_epochs):
             start = idx * hop
-            epoch = gsr[start:start + epoch_samples]
-            prediction = await apply_model(epoch, sampling_freq, signal_preprocess)
+            epoch = np.asarray(gsr[start:start + epoch_samples])
+            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess)
             predictions.append(prediction)
             idx += 1
 
@@ -493,16 +533,23 @@ async def dataset_forward_pass_test():
 
 
 async def embrace_forward_pass_plot():
-    dir_path = "Utility/EmbraceData/AlessandroVisconti/StressScenario/"
+    dir_path = "Utility/EmbraceData/AlessandroVisconti/NoStressScenario/"
     sampling_freq = 4
 
-    gsr_array = read_and_plot(["Utility/csv/1-1-0_1753974072.avro.csv"],
-                        "2025-07-31 17:17:00.031178", "2025-07-31 17:27:00.715103", dir_path, sampling_freq, False)
+    gsr_array = read_and_plot(["Utility/csv/1-1-0_1753976128.avro.csv"],
+                        "2025-07-31 17:37:00.031178", "2025-07-31 17:48:00.715103", dir_path, sampling_freq, False)
+
+    gsr_array = np.asarray(neurokit2.signal_filter(gsr_array, sampling_rate=sampling_freq, lowcut=0.0005, highcut=1.9, method='butterworth', order=2))
+
+    eda_signals, info = neurokit2.eda_process(gsr_array, sampling_rate=sampling_freq)
+    neurokit2.eda_plot(eda_signals, info)
+    neuro_analysis = plt.gcf()
+    neuro_analysis.savefig(f"{dir_path}Analysis.png")
     eps = 1e-6
     gsr_array = 100/(gsr_array + eps)
     #gsr_array = resample_poly(gsr_array, up=sampling_freq, down=4)
     epoch_length = 15
-    overlap = 0.5
+    overlap = 0.2
     epoch_samples = int(epoch_length * sampling_freq)
     hop = int(epoch_samples * (1 - overlap))
 
@@ -516,12 +563,44 @@ async def embrace_forward_pass_plot():
         for idx in range(n_epochs):
             start = idx * hop
             epoch = gsr_array[start:start + epoch_samples]
-            prediction = await apply_model(epoch, sampling_freq, signal_preprocess)
+            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess)
             predictions.append(prediction)
             idx += 1
 
-
+    #plot_signal_nosave(predictions, title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
     plot_signal(predictions, os.path.join(dir_path, "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
 
+
+async def random_prediction_test():
+    sampling_freq = 128
+    gsr_array = np.asarray(neurokit2.eda_simulate(150, sampling_rate=sampling_freq, random_state=71))
+    eda_signals, info = neurokit2.eda_process(gsr_array, sampling_rate=sampling_freq)
+    neurokit2.eda_plot(eda_signals, info)
+    plt.show()
+    eps = 1e-6
+    gsr_array = 100/(gsr_array + eps)
+    #gsr_array = neurokit2.eda_clean(gsr_array, sampling_rate=sampling_freq)
+    #gsr_array = resample_poly(gsr_array, up=sampling_freq, down=4)
+    epoch_length = 15
+    overlap = 0.2
+    epoch_samples = int(epoch_length * sampling_freq)
+    hop = int(epoch_samples * (1 - overlap))
+
+    predictions = []
+    if len(gsr_array):
+
+        total = len(gsr_array)
+        signal_preprocess = SignalPreprocess(4)
+        n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
+
+        for idx in range(n_epochs):
+            start = idx * hop
+            epoch = gsr_array[start:start + epoch_samples]
+            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess)
+            predictions.append(prediction)
+            idx += 1
+
+    plot_signal_nosave(predictions, title="Predicted value",
+                       xlabel="Time Samples", ylabel="Prediction")
 #dataset_forward_pass_test()
 #scalogram_test()

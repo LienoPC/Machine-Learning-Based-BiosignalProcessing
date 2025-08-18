@@ -14,15 +14,13 @@ from sklearn.preprocessing import MinMaxScaler
 
 def extract_features(epoch_signal, sampling_rate):
 
-    #eda_signals, info = neurokit2.eda_process(epoch_signal, sampling_rate=sampling_rate)
+    eda_signals, info = neurokit2.eda_process(epoch_signal, sampling_rate=sampling_rate)
     #neurokit2.eda_plot(eda_signals, info)
     #plt.show()
     #epoch_signal = neurokit2.signal_filter(epoch_signal, sampling_rate=sampling_rate, lowcut=0.2, highcut=1.9, method='butterworth', order=1)
 
-    #scr_signal = neurokit2.eda_phasic(epoch_signal, sampling_rate)
-    #scr_signal = np.asarray(scr_signal["EDA_Phasic"])
-
-    scr_signal = epoch_signal
+    scr_signal = neurokit2.eda_phasic(epoch_signal, sampling_rate)
+    scr_signal = np.asarray(scr_signal["EDA_Phasic"])
 
     if len(scr_signal) == 0:
         return (0, 0, 0, 0, 0, 0)
@@ -33,6 +31,7 @@ def extract_features(epoch_signal, sampling_rate):
     range_scr = max_scr - min_scr
     skeweness_scr = scipy.stats.skew(scr_signal)
     kurtosis_scr = scipy.stats.kurtosis(scr_signal)
+
 
     return (mean_scr, max_scr, min_scr, range_scr, skeweness_scr, kurtosis_scr)
 

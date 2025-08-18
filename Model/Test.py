@@ -26,11 +26,11 @@ metrics_header = ['model_name', 'loss', 'accuracy', 'precision', 'recall', 'f1-s
 num_classes = 1
 def test():
     model_name = "inception_resnet_v2"
-    model_path = "./Log/Saved/WESAD_Modified_MaxFreq_4_15s/inception_resnet_v2_differential/inception_resnet_v2_differential_100.pt"
+    model_path = "./Log/Saved/WESAD_Chest_25_MaxFreq_8_SCR_15s_Overlap_0,2/inception_resnet_v2_whole/inception_resnet_v2_whole_100.pt"
 
     init_test_csv(model_name)
-    mean = [0.1522, 0.4008, 0.7676]
-    std = [0.2945, 0.3832, 0.2983]
+    mean = [0.0737, 0.2921, 0.8055]
+    std = [0.1991, 0.3410, 0.2295]
 
     transform = ScalogramImageTransform(224, mean=mean, std=std)
 

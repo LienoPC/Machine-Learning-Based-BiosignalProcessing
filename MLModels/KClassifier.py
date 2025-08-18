@@ -13,7 +13,7 @@ import seaborn as sns
 
 import pandas as pd
 
-csvfile = "./Data/WESAD_filtered.csv"
+csvfile = "./Data/WESAD_redefined.csv"
 model_name = "knn_WESAD_6F"
 feature_names = ["MeanSCR", "MaxSCR", "MinSCR", "RangeSCR", "SkewenessSCR", "KurtosisSCR"]
 
@@ -70,10 +70,11 @@ def train_knn_model(k_folds=10):
 
     best_model = grid_search.best_estimator_
 
-    test_score(best_model, X_test, y_test, y, "file.txt")
+
+    test_model(best_model, X_test, y_test, y, "file.txt")
     return best_model
 
-def test_score(model, X_test, y_test, y, file=None):
+def test_model(model, X_test, y_test, y, file=None):
     print("\nHold-out Test Set Results:")
     y_pred = model.predict(X_test)
     print(classification_report(y_test, y_pred))
@@ -113,7 +114,7 @@ def print_cm(y_test, y_pred, y):
     plt.show()
     fig.savefig("confusion_matrix.png")
 
-def save_model(model):
+def save_model(model, name):
 
     # Main model infos
     model_artifact = {
@@ -123,24 +124,15 @@ def save_model(model):
     }
 
     # Artifact saved as joblib file
-    joblib.dump(model_artifact, f"{model_name}.joblib")
-
-
-def load_model(joblib_file):
-
-    artifact = joblib.load(joblib_file)
-    model = artifact["model"]
-    feature_names = artifact["feature_names"]
-
-    return model, feature_names
+    joblib.dump(model_artifact, f"{name}.joblib")
 
 
 
 def train_knn_main():
     model = train_knn_model()
 
-    save_model(model)
+    save_model(model, model_name)
 
 
-#train_knn_main()
+train_knn_main()
 

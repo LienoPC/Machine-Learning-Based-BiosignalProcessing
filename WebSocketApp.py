@@ -9,6 +9,9 @@ from threading import Lock
 from contextlib import asynccontextmanager
 import logging
 import httpx
+import numpy as np
+from matplotlib import pyplot as plt
+
 
 class ExcludePredictFilter(logging.Filter):
     def filter(self, record):
@@ -21,16 +24,18 @@ from PIL import Image
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.concurrency import run_in_threadpool
 import uvicorn
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import List, Any, Optional
 from zeroconf import ServiceInfo, Zeroconf
 import socket
 
 from zeroconf.asyncio import AsyncZeroconf
 
-from Model.Predictor import Predictor
+from Model.Predictor import Predictor, MLPredictor, CNNPredictor
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
-from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test, embrace_forward_pass_plot
+from Model.InnerStreamFunctions import log_to_queue, data_processing, dataset_forward_pass_test, \
+    embrace_forward_pass_plot, random_prediction_test
 from Server.UnityStream import stream_mockup, respond_to_discovery
 import logging
 import threading
@@ -42,16 +47,19 @@ manager = ConnectionManager()
 data_task: asyncio.Task | None = None
 
 # Create predictor object
-MODEL_NAME = "resnet50"
-CHECKPOINT_PATH = "./Model/SavedModels/resnet50_whole_100.pt"
+MODEL_NAME = "inception_resnet_v2"
+CHECKPOINT_PATH = "./Model/SavedModels/inception_resnet_v2_whole_100.pt"
 DEVICE = "cuda"
+
+KNN_MODEL_PATH = "./MLModels/Saved/knn_WESAD_6F.joblib"
+RF_MODEL_PATH = "./MLModels/Saved/rf_WESAD_6F.joblib"
 
 predictor = None
 
 def create_predictor():
     global predictor
     if predictor is None:
-        predictor = Predictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=True)
+        predictor = CNNPredictor(MODEL_NAME, CHECKPOINT_PATH, DEVICE, threshold=True)
 # Global parameters
 window_seconds = 15
 overlap = 0.5
@@ -61,6 +69,11 @@ overlap = 0.5
 class Prediction(BaseModel):
     probability: float
     label: int
+
+# Input data model for ML prediction endpoint
+class WindowRequest(BaseModel):
+    window: List[float] = Field(..., min_items=1)
+    sampling_rate: Optional[int] = None
 
 # Cleanly cancel & await it on shutdown
 @asynccontextmanager
@@ -144,7 +157,7 @@ async def model_stream(websocket: WebSocket):
         print("Model processing stream error:", exc)
 
 
-# Predict endpoint
+# CNN Predict endpoint
 @websocketApp.post("/predict", response_model=Prediction)
 async def predict(file: UploadFile = File(...)):
     if file.content_type.split("/")[0] != "image":
@@ -157,6 +170,14 @@ async def predict(file: UploadFile = File(...)):
 
     prob, label = await run_in_threadpool(predictor.predict, img)
     return Prediction(probability=prob, label=label)
+
+# ML Predict endpoint
+@websocketApp.post("/predict_ml", response_model=Prediction)
+async def predict_ml(req: WindowRequest):
+    window = np.asarray(req.window, dtype=float).ravel()
+
+    label = await run_in_threadpool(predictor.predict, window)
+    return Prediction(probability=0.0, label=label)
 
 def get_service_info(service_name, stream_id, port):
     hostname = socket.gethostname()
@@ -257,7 +278,7 @@ async def main():
     server_process.start()
 
     # Wait server to effectively run
-    await wait_for_health("http://127.0.0.1:8000/health", timeout=15.0)
+    await wait_for_health("http://127.0.0.1:8000/health", timeout=35.0)
     threading.Thread(target=start_mock_slider, daemon=True).start()
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
@@ -267,7 +288,7 @@ async def main():
 
     # Start for the first time the discovery of external connection requests to the unity websocket
     await asyncio.sleep(10)
-    await embrace_forward_pass_plot()
+    await random_prediction_test()
     # Test code to maintain the server active
     try:
         info_unity = get_service_info("unitybiosignal_stream", "ubs", 8000)

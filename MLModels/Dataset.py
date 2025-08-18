@@ -3,12 +3,14 @@ import math
 import os
 import pickle
 
+import neurokit2
 import numpy as np
 import pandas as pd
 import pywt
+from matplotlib import pyplot as plt
 
 from MLModels.FeatureExtraction import extract_features, extract_window_features_list, swt_denoise, separate_scl_scr, \
-    swt_denoise_safe, normalize_signal
+    swt_denoise_safe, normalize_signal, butter_bandpass_filter, butter_lowpass_filter
 from Model.Dataset.WESAD import resample_labels, window_labels
 
 WESAD_path = "../Model/Dataset/Data/WESAD/"
@@ -68,14 +70,19 @@ def build_dataset():
             assert len(gsr_wrist) == len(labels_resampled)
             labels_window = window_labels(labels_resampled, window_size, stride, label_weights=label_weights)
             labels_list.extend(labels_window)
-            gsr_wrist = 100.0 / (gsr_wrist + eps)
-
-            gsr_wrist = normalize_signal(gsr_wrist)
+            #gsr_wrist = 100.0 / (gsr_wrist + eps)
 
 
-            gsr_wrist = swt_denoise(gsr_wrist, wavelet='db4', level=3)
+            #gsr_wrist = normalize_signal(gsr_wrist)
+            #gsr_wrist = butter_bandpass_filter(gsr_wrist, 0.00005, 1.9, fs, 1)
+
+            '''
+            gsr_wrist = butter_lowpass_filter(gsr_wrist, 0.5, fs)
+            gsr_wrist = swt_denoise_safe(gsr_wrist, wavelet='db4', level=3)
 
             gsr_wrist = separate_scl_scr(gsr_wrist)
+
+            '''
 
             features = extract_window_features_list(gsr_wrist, fs, window_size, stride, n_epochs)
             feature_list.extend(features)

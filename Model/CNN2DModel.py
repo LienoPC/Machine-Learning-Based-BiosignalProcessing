@@ -25,8 +25,8 @@ def main_transfer_learning():
     ## Data loading
     img_size = 224 # The network takes 224x224x3
 
-    mean = [0.1522, 0.4008, 0.7676]
-    std = [0.2945, 0.3832, 0.2983]
+    mean = [0.0737, 0.2921, 0.8055]
+    std = [0.1991, 0.3410, 0.2295]
 
     # Load dataset
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
@@ -127,8 +127,8 @@ def get_weighted_random_sampler(label_list):
 def subdivide_dataset(csv_path, csv_name, save_path):
     df = pd.read_csv(csv_path + csv_name, header=None, names=["img", "label"])
 
-    train_val, test = train_test_split(df, test_size=0.10, stratify=df["label"], random_state=30)
-    train, val = train_test_split(train_val, test_size=0.10/0.90, stratify=train_val["label"], random_state=30)
+    train_val, test = train_test_split(df, test_size=0.10, stratify=df["label"], random_state=31)
+    train, val = train_test_split(train_val, test_size=0.10/0.90, stratify=train_val["label"], random_state=28)
     train.to_csv(f"{save_path}/train.csv", index=False)
     val.to_csv(f"{save_path}/valid.csv", index=False)
     test.to_csv(f"{save_path}/test.csv", index=False)
@@ -156,6 +156,7 @@ def create_dataset_():
 
     mean, std = SignalImageDataset.compute_mean_std(entire_dataloader)
 
-#subdivide_dataset('./Dataset/Data/', 'WESAD_filtered.csv', './Dataset')
+
+#subdivide_dataset('./Dataset/Data/', 'WESAD_redefined.csv', './Dataset')
 #create_dataset_()
 #main_transfer_learning()

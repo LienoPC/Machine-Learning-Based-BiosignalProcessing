@@ -1,12 +1,13 @@
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV, GroupKFold
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-from MLModels.KClassifier import test_score, get_train_test_data
+from MLModels.KClassifier import test_model, get_train_test_data, save_model
 
-csvfile = "./Data/WESAD_filtered.csv"
+csvfile = "./Data/WESAD_redefined.csv"
 
 feature_names = ["MeanSCR", "MaxSCR", "MinSCR", "RangeSCR", "SkewenessSCR", "KurtosisSCR"]
 
@@ -35,11 +36,13 @@ def train_random_forest_model(k_folds=10):
 
     best_model = grid_search.best_estimator_
 
+
     importances = best_model.named_steps['clf'].feature_importances_
     for name, imp in zip(feature_names, importances):
         print(name, imp)
 
-    test_score(best_model, X_test, y_test, y, "file.txt")
+    test_model(best_model, X_test, y_test, y, "file.txt")
+    save_model(best_model, "rf_WESAD_6F")
     return best_model
 
 
@@ -67,12 +70,21 @@ def train_xgboost(k_folds=10):
     print("Best parameters:", grid_search.best_params_)
 
     best_model = grid_search.best_estimator_
+    y_pred_train = best_model.predict(X_train)
+    y_pred_test = best_model.predict(X_test)
 
+    print("Train Accuracy:", accuracy_score(y_train, y_pred_train))
+    print("Test Accuracy:", accuracy_score(y_test, y_pred_test))
+
+    print("Train F1:", f1_score(y_train, y_pred_train, average="macro"))
+    print("Test F1:", f1_score(y_test, y_pred_test, average="macro"))
     importances = best_model.named_steps['clf'].feature_importances_
     for name, imp in zip(feature_names, importances):
         print(name, imp)
 
-    test_score(best_model, X_test, y_test, y, "file.txt")
+    test_model(best_model, X_test, y_test, y, "file.txt")
+
+    save_model(best_model, "xgb_WESAD_6F")
     return best_model
 
 
