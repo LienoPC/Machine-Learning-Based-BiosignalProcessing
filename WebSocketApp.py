@@ -48,7 +48,7 @@ data_task: asyncio.Task | None = None
 
 # Create predictor object
 MODEL_NAME = "inception_resnet_v2"
-CHECKPOINT_PATH = "./Model/SavedModels/inception_resnet_v2_whole_100.pt"
+CHECKPOINT_PATH = "Model/SavedModels/inception_resnet_v2_whole_100.pt"
 DEVICE = "cuda"
 
 KNN_MODEL_PATH = "./MLModels/Saved/knn_WESAD_6F.joblib"

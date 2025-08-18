@@ -318,7 +318,7 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
 
 
 
-async def apply_cnn_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+async def apply_cnn_model(signal_window, sampling_freq, signal_preprocess, data_logger=None, scr=True):
     """
     Takes the window signal, applies preprocessing to it, and returns the prediction result
     :param signal_window:
@@ -329,12 +329,11 @@ async def apply_cnn_model(signal_window, sampling_freq, signal_preprocess, data_
     try:
         timestamp = datetime.datetime.now()
         # Resample to correct frequency
-
         resampled_signal = signal_preprocess.resample_epoch(signal_window, sampling_freq)
-
-        scr_signal = signal_preprocess.preprocess_signal(resampled_signal)
-        #scr_signal = neurokit2.signal_filter(scr_signal, sampling_rate=signal_preprocess.fs, lowcut=0.0005, highcut=1.9)
-        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(scr_signal)
+        if scr:
+            resampled_signal = signal_preprocess.preprocess_signal(resampled_signal)
+        #scr_signal = neurokit2.signal_filter(scr_signal, sampling_rate=signal_preprocess.fs, lowcut=0.0005, highcut=1.8)
+        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(resampled_signal)
 
 
 
@@ -505,7 +504,6 @@ async def dataset_forward_pass_test():
     first_line = sensor_data_list[0]
     sampling_freq = first_line.sample_rate
 
-    print(f"Read sampling freq: {sampling_freq}")
     epoch_samples = int(epoch_length * sampling_freq)
     hop = int(epoch_samples * (1 - overlap))
     eps = 1e-6
@@ -524,20 +522,21 @@ async def dataset_forward_pass_test():
         for idx in range(n_epochs):
             start = idx * hop
             epoch = np.asarray(gsr[start:start + epoch_samples])
-            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess)
+            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess, scr=False)
             predictions.append(prediction)
             idx += 1
 
     plot_signal_nosave(predictions, title="Predicted value",
                         xlabel="Time Samples", ylabel="Prediction")
+    plot_signal(predictions, os.path.join("Model/Log/Stream/", "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
 
 
 async def embrace_forward_pass_plot():
     dir_path = "Utility/EmbraceData/AlessandroVisconti/NoStressScenario/"
     sampling_freq = 4
 
-    gsr_array = read_and_plot(["Utility/csv/1-1-0_1753976128.avro.csv"],
-                        "2025-07-31 17:37:00.031178", "2025-07-31 17:48:00.715103", dir_path, sampling_freq, False)
+    gsr_array = read_and_plot(["Utility/csv/1-1-0_1753974072.avro.csv"],
+                        "2025-07-31 17:17:00.031178", "2025-07-31 17:27:00.715103", dir_path, sampling_freq, False)
 
     gsr_array = np.asarray(neurokit2.signal_filter(gsr_array, sampling_rate=sampling_freq, lowcut=0.0005, highcut=1.9, method='butterworth', order=2))
 
@@ -573,7 +572,7 @@ async def embrace_forward_pass_plot():
 
 async def random_prediction_test():
     sampling_freq = 128
-    gsr_array = np.asarray(neurokit2.eda_simulate(150, sampling_rate=sampling_freq, random_state=71))
+    gsr_array = np.asarray(neurokit2.eda_simulate(180, sampling_rate=sampling_freq, scr_number=1, drift=-0.0001, noise=0.05))
     eda_signals, info = neurokit2.eda_process(gsr_array, sampling_rate=sampling_freq)
     neurokit2.eda_plot(eda_signals, info)
     plt.show()
@@ -596,7 +595,7 @@ async def random_prediction_test():
         for idx in range(n_epochs):
             start = idx * hop
             epoch = gsr_array[start:start + epoch_samples]
-            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess)
+            prediction = await apply_cnn_model(epoch, sampling_freq, signal_preprocess, scr=True)
             predictions.append(prediction)
             idx += 1
 

@@ -18,15 +18,15 @@ from Model.Train.Train import train_loop
 
 
 # Array of all transfer learning modes to try with the associated learning rates
-transfer_modes = [('whole', 0.0001), ('differential', (0.0001, 0.001))]
-models = ['inception_resnet_v2']
+transfer_modes = [('whole', 0.0001)]
+models = ['resnet50', 'inception_resnet_v2']
 def main_transfer_learning():
 
     ## Data loading
     img_size = 224 # The network takes 224x224x3
 
-    mean = [0.0737, 0.2921, 0.8055]
-    std = [0.1991, 0.3410, 0.2295]
+    mean = [0.1549, 0.4140, 0.7705]
+    std = [0.2953, 0.3830, 0.2990]
 
     # Load dataset
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
@@ -90,7 +90,7 @@ def transfer_learn(model_name, train_loader, valid_loader):
         optimizer = optim.Adam(param_groups, lr=learning_rate)
         lr_decay = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
-        model, best_threshold = train_loop(model, f"{model_name}_{mode[0]}", criterion, optimizer, dataloaders, dataset_sizes, lr_decay=lr_decay, num_epochs=100)
+        model, best_threshold = train_loop(model, f"{model_name}_{mode[0]}", criterion, optimizer, dataloaders, dataset_sizes, lr_decay=lr_decay, num_epochs=75)
         del model
         del optimizer
         del lr_decay

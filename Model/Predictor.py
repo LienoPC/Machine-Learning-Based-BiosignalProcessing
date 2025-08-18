@@ -85,8 +85,13 @@ class MLPredictor(Predictor):
     def extract_features(self, epoch_signal):
         #scaler = MinMaxScaler(feature_range=(0, 1))
         #epoch_signal = scaler.fit_transform(epoch_signal.reshape(-1, 1)).flatten()
-        scr_signal = neurokit2.eda_phasic(epoch_signal, self.sampling_rate)
+
+        pad_samples = len(epoch_signal)
+        padded = np.pad(epoch_signal, (pad_samples, pad_samples), mode='reflect')
+        # Extract SCR (Skin Conductance Response)
+        scr_signal = neurokit2.eda_phasic(padded, self.sampling_rate)
         scr_signal = np.asarray(scr_signal["EDA_Phasic"])
+        scr_signal = scr_signal[pad_samples: pad_samples + len(epoch_signal)]
 
         if len(scr_signal) == 0:
             return (0, 0, 0, 0, 0, 0)

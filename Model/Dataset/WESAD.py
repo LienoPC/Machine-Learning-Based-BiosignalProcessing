@@ -129,7 +129,7 @@ def build_dataset():
 
     window_length = 15
     fs = 4
-    overlap = 0.5
+    overlap = 0.2
     window_size = int(window_length * fs)
     stride = int(window_size * (1 - overlap))
     eps = 1e-6
@@ -149,7 +149,7 @@ def build_dataset():
             labels_list.extend(labels_window)
             gsr_wrist = 100.0 / (gsr_wrist + eps)
 
-            img_list.extend(signal_preprocess.entire_signal_to_scalogram_images(gsr_wrist, epoch_length=window_length, output_folder="Data/WESAD_Dataset", additional_path="Dataset/"))
+            img_list.extend(signal_preprocess.entire_signal_to_scalogram_images(gsr_wrist, epoch_length=window_length, output_folder="Data/WESAD_Dataset", additional_path="Dataset/", overlap=overlap))
             assert len(img_list) == len(labels_list)
 
 
@@ -610,8 +610,10 @@ def windowing_padding():
                 fname = f"Data/Windowed/epoch_{idx}.png"
                 cv2.imwrite(fname, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
+
 #build_SCR_chest_dataset()
-#remove_invalid_labels_from_dataset()
-#redefine_invalid_labels_from_dataset()
+build_dataset()
+remove_invalid_labels_from_dataset()
+redefine_invalid_labels_from_dataset()
 
 #windowing_padding()

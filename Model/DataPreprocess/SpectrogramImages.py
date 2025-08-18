@@ -288,9 +288,9 @@ class SignalPreprocess():
 
     def resample_epoch(self, epoch_data, fs_data):
         if fs_data == self.fs:
-            print("\nSkipping resampling: sampling frequency matches\n")
             return epoch_data
 
+        #final_signal = np.asarray(nk.eda_clean(epoch_data, sampling_rate=fs_data))
         final_signal = epoch_data
         # Resample data to model frequency
         if fs_data > self.fs and float.is_integer(fs_data/self.fs):
@@ -312,7 +312,7 @@ class SignalPreprocess():
                 return res_epoch
         else:
             print("Resampling poly")
-            res_epoch = resample_poly(final_signal, up=fs_data, down=self.fs)
+            res_epoch = resample_poly(final_signal, up=self.fs, down=fs_data)
             return res_epoch
 
 
