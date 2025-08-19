@@ -18,48 +18,8 @@ class SignalPreprocess():
         self.fs = fs
 
 
-    def initialize_filter(self, initial_value):
-        '''
-        Initialize the bandpass filter, to be called the first time before starting filtering. Sets the zi filter's state to be used in each call
-        :param initial_value: First value of the time-series signal
-        '''
-        self.b, self.a = self.butter_bandpass_filter_definition(6)
-        self.zi = lfilter_zi(self.b, self.a) * initial_value
-
-    def butter_bandpass_filter_definition(self, order=6):
-        '''
-        Creates a butterworth bandpass filter. Returns polynomials (numerator and denominator) of the filter.
-        :param fs: Sampling frequency (in Hz)
-        :param lowcut: Lower frequency
-        :param highcut: Higher frequency
-        :param order: Filter order
-        '''
-        eps = 1e-8
-        nyq_freq = 0.5 * self.fs
-        # Normalize cutoffs of the Nyquist frequency
-        low_freq = self.lowcut / nyq_freq
-        if(self.highcut > nyq_freq):
-            self.highcut = nyq_freq - eps
-
-        high_freq = self.highcut / nyq_freq
-        print(f"Normalized low_freq: {low_freq} and high_freq: {high_freq}")
-        # Compute filter coefficients
-        b, a = butter(order, [low_freq, high_freq], btype='band', output='ba')
-        return b, a
-
-
-    def apply_bandpass_filter(self, signal_samples):
-        '''
-        :param signal_samples: 1D Time signal to be filtered
-        :return: The filtered 1D time signal result from the bandpass filter
-        '''
-        if not hasattr(self, 'zi'):
-            self.initialize_filter(signal_samples[0])
-        filtered_signal = filtfilt(self.b, self.a, signal_samples)
-        return filtered_signal
-
     def epoch_to_spectrogram_image(self, epoch_data, lowfreq=None, highfreq=None, freqbin=1, output_size=(224, 224)):
-        '''
+        """
         Turn one window of raw signal (epoch_data) into a 3-channel image spectrogram
         :param epoch_data: 1D array of raw signal data
         :param fs: Sampling frequency (Hz)
@@ -68,7 +28,7 @@ class SignalPreprocess():
         :param freqbin: Frequency resolution (Hz)
         :param output_size: Desired output image dimensions (width, height)
         :return: Spectrogram image computed
-        '''
+        """
 
         lowfreq = lowfreq or self.lowcut
         highfreq = highfreq or self.highcut
@@ -190,9 +150,8 @@ class SignalPreprocess():
 
         return img_list_path
 
-
     def compute_morlet_cwt(self, raw_signal, fs, num_scales=32, freq_min=0.5, freq_max=4, w=6.0):
-        '''
+        """
         Compute the continuous wavelet transform (using morlet wavelets)
         :param raw_signal: 1D Array of input signal
         :param fs: Sampling frequency in Hz
@@ -202,8 +161,7 @@ class SignalPreprocess():
         :param w: Morlet parameter
         :return: 2D complex array with shape (scales, len(raw_signal)) of wavelet coefficients.
         1D Array of scales used for each row of the coefficients and 1D Array of center frequencies of each scale
-        '''
-
+        """
         # Center frequencies evenly spaced between freq_min and freq_max
         center_freqs = np.linspace(freq_min, freq_max, num_scales)
 
@@ -215,7 +173,7 @@ class SignalPreprocess():
         return coefficients, scales, center_freqs
 
     def cwt_to_scalogram_image(self, coefficients, times=None, vmin=None, vmax=None, cmap_name='jet', n_colors=128, output_size=(224,224), interpolation=cv2.INTER_LINEAR, epoch_data=None):
-        '''
+        """
         Convert CWT coefficients into an RGB scalogram image using discrete jet color map (128 colors)
 
         :param coefficients: Complex CWT coefficients, output of signal.cwt; Shape: (n_scales, len(raw_signal))
@@ -228,8 +186,7 @@ class SignalPreprocess():
         :param output_size: Size of the created image
         :param interpolation: Type of interpolation used for resize
         :return: The scalogram as an RGB uint8 image
-        '''
-
+        """
         # Image is created on magnitude
         magnitude = np.abs(coefficients)
 
@@ -254,6 +211,14 @@ class SignalPreprocess():
         return rgb_img
 
     def epoch_to_scalogram_image_pywt(self, epoch_data, num_scales=32, freq_min=0.5, freq_max=4):
+        """
+        Compute the continuous wavelet transform using PyWavelets methods and creates a scalogram RGB image
+        :param epoch_data: 1D Array of input signal
+        :param num_scales: Number of wavelet scales
+        :param freq_min: Minimum center frequency for the lowest scale in Hz
+        :param freq_max: Maximum center frequency for the highest scale in Hz
+        :return: (DIM, DIM, DIM, 3) array image
+        """
         wavelet = pywt.ContinuousWavelet('cmor2.0-1.0')
         #freqs = np.linspace(freq_min, freq_max, num_scales)
         freqs = np.logspace(np.log10(freq_min), np.log10(freq_max), num_scales)
@@ -265,28 +230,24 @@ class SignalPreprocess():
         pad_len = int(np.ceil(4 * max_scale))
         #pad_len = len(epoch_data)
 
+        # Padding data to avoid edge effects when applying CWT
         data_p = np.pad(epoch_data, pad_width=pad_len, mode='symmetric')
         coef_p, freq = pywt.cwt(data_p, scales, sampling_period=1/self.fs, wavelet=wavelet, method='fft')
         coef = coef_p[:, pad_len: pad_len + pad_len]
 
+        # Scale CWT coefficients
         coef_p /= np.sqrt(scales)[:, None]
 
         scalogram_image = self.cwt_to_scalogram_image(coef, freq, epoch_data=epoch_data, interpolation=cv2.INTER_LINEAR)
         return scalogram_image
 
-
-    def epoch_to_scalogram_image(self, epoch_data):
-        # Apply pass filter
-        epoch_data = self.apply_bandpass_filter(epoch_data)
-        # Compute cwt
-        coeff, scales, center_freqs = self.compute_morlet_cwt(epoch_data, self.fs)
-
-        # Compute image
-        scalogram_image = self.cwt_to_scalogram_image(coeff, center_freqs, epoch_data=epoch_data)
-
-        return scalogram_image
-
     def resample_epoch(self, epoch_data, fs_data):
+        """
+        Resamples an input signal to the target scalogram image sampling frequency
+        :param epoch_data: 1D Array of input signal
+        :param fs_data: Sampling rate of the input signal
+        :return: 1D Array of the resampled signal
+        """
         if fs_data == self.fs:
             return epoch_data
 
@@ -308,15 +269,20 @@ class SignalPreprocess():
                     res_epoch = decimate(res_epoch, q=q, ftype='iir', zero_phase=True)
                 return res_epoch
             else:
+                # No multiple scaling
                 res_epoch = decimate(final_signal, q=int(fs_data/self.fs), ftype='iir', zero_phase=True)
                 return res_epoch
         else:
-            print("Resampling poly")
+            # Scaling factor is not integer
             res_epoch = resample_poly(final_signal, up=self.fs, down=fs_data)
             return res_epoch
 
-
     def preprocess_signal(self, epoch_data):
+        """
+        Computes the Skin Conductance Response (SCR) of the input GSR signal
+        :param epoch_data: 1D Array of input signal
+        :return: 1D Array of the resampled signal
+        """
         # Apply padding to remove edge-related problems
         pad_samples = len(epoch_data)
         padded = np.pad(epoch_data, (pad_samples, pad_samples), mode='reflect')
@@ -328,7 +294,7 @@ class SignalPreprocess():
 
     def entire_signal_to_scalogram_images(self, raw_signal, epoch_length=15, overlap=0.5, output_folder='Log/output_scalograms', additional_path='Dataset'):
         """
-        Creates a folder of scalogram images starting from a raw signal. Used for dataset preprocessing
+        Creates a folder of scalogram images starting from a raw signal. Used for dataset creation
         :param raw_signal: a
         :param epoch_length:
         :param overlap:
@@ -348,11 +314,7 @@ class SignalPreprocess():
         #os.makedirs(output_folder + "/Plots", exist_ok=True)
 
         final_signal = raw_signal
-        #final_signal = nk.eda_clean(raw_signal, sampling_rate=self.fs, method='neurokit')
-        #final_signal = nk.signal_filter(raw_signal, sampling_rate=self.fs, lowcut=0.2, highcut=1.9, method='butterworth', order=8) # Used for already resampled signal
         img_list_path = []
-        #fname = os.path.join(output_folder, f"Plots/Entire.png")
-        #plot_signal(raw_signal, fname)
         epoch_base = len(os.listdir(output_folder))
         # Process each epoch
         for idx in range(n_epochs):
@@ -370,7 +332,15 @@ class SignalPreprocess():
 
         return img_list_path
 
-    def plot_scalogram(self, coeff, freqs, time_axis):
+    @staticmethod
+    def plot_scalogram(coeff, freqs, time_axis):
+        '''
+        DEBUG ONLY; Plots a scalogram using matplotlib
+        :param coeff:
+        :param freqs:
+        :param time_axis:
+        :return:
+        '''
         fig, axs = plt.subplots()
         pcm = axs.pcolormesh(time_axis, freqs, coeff, shading='auto')
         axs.set_yscale("log")
@@ -383,7 +353,7 @@ class SignalPreprocess():
 
 def plot_signal(signal, filename, title=None, xlabel='Sample', ylabel='Amplitude'):
     """
-    Plots a 1D signal and saves the plot as an image file.
+    Plots a 1D signal and saves the plot as an image file
 
     :param signal: Iterable of numeric values representing the signal.
     :param filename: Path (including filename) where the plot image will be saved.
@@ -403,10 +373,9 @@ def plot_signal(signal, filename, title=None, xlabel='Sample', ylabel='Amplitude
 
 def plot_signal_nosave(signal, title=None, xlabel='Sample', ylabel='Amplitude'):
     """
-    Plots a 1D signal and saves the plot as an image file.
+    Plots a 1D signal without saving
 
     :param signal: Iterable of numeric values representing the signal.
-    :param filename: Path (including filename) where the plot image will be saved.
     :param title: Title of the plot.
     :param xlabel: Label for the x-axis.
     :param ylabel: Label for the y-axis.

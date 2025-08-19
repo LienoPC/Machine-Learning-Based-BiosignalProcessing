@@ -141,8 +141,6 @@ def get_dataset_lists(csv_path):
 
 
 def create_dataset_():
-    #subdivide_dataset("./Dataset/Data/WESAD/", "WESAD_filtered.csv", "./Dataset")
-
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
     valid_img_list, valid_label_list = get_dataset_lists("./Dataset/valid.csv")
     test_img_list, test_label_list = get_dataset_lists("./Dataset/test.csv")
