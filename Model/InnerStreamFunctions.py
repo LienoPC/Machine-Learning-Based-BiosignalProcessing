@@ -297,7 +297,9 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
 
 
             if predict_fn: # TODO: Remove, test only
-                await unity_stream(predict_fn(), websocketManager)
+                predict = predict_fn()
+                print(f"DATA: Sending fake predictions = {predict}")
+                await unity_stream(predict, websocketManager)
             else:
                 # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
                 read_list = dataManager.read_window_overlap(window_samples, overlap)

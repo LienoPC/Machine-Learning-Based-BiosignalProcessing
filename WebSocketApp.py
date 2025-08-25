@@ -9,6 +9,9 @@ import logging
 import httpx
 import numpy as np
 
+from Utility.ModelTestProcessFunctions import random_prediction_test
+
+
 # Disables predict endpoint logging
 class ExcludePredictFilter(logging.Filter):
     def filter(self, record):
@@ -56,6 +59,7 @@ window_seconds = 15
 overlap = 0.2
 predictor = None
 
+shared_slider = None
 def create_predictor():
     """
     Creates predictor object. Called once at startup
@@ -91,9 +95,11 @@ logging.getLogger("uvicorn.access").disabled = True
 # Websocket application listening and sending data stream
 websocketApp = FastAPI(lifespan=lifespan)
 
+
 @websocketApp.get("/health", include_in_schema=False)
 async def health_check():
     return {"status": "ok"}
+
 
 @websocketApp.websocket("/ws/ss")
 async def sensor_in_stream(websocket: WebSocket):
@@ -124,11 +130,11 @@ async def sensor_in_stream(websocket: WebSocket):
             data_manager.push_single(obj)
 
     except WebSocketDisconnect as exc:
-        print(f"WebSocket disconnected: code={exc.code}")
+        print(f"SERVER/WS/SS: WebSocket disconnected: code={exc.code}")
     except Exception as exc:
-        print("WebSocket error:", exc)
+        print("SERVER/WS/SS: WebSocket error:", exc)
     finally:
-        print("Sensor connection closed.")
+        print("SERVER/WS/SS: Sensor connection closed.")
 
 
 @websocketApp.websocket("/ws/ubs")
@@ -147,12 +153,12 @@ async def model_stream(websocket: WebSocket):
     stop.clear()
     try:
         def live_mock_predict(*args, **kwargs):
-            return mock_slider_value
+            return int(shared_slider.value) if shared_slider is not None else 0
         await data_processing(data_manager, manager, window_seconds, overlap, 4, stop, live_mock_predict)
     except WebSocketDisconnect:
-        print("Application client disconnected, closing connection...\n")
+        print("SERVER/WS/UBS: Application client disconnected, closing connection...\n")
     except Exception as exc:
-        print("Model processing stream error:", exc)
+        print("SERVER/WS/UBS: Model processing stream error:", exc)
 
 
 # CNN Predict endpoint
@@ -289,7 +295,9 @@ async def wait_for_health(url: str, timeout: float = 20.0, interval: float = 0.2
     raise TimeoutError(f"SERVER: Health‐check failed at {url}")
 
 
-def run_server():
+def run_server(shared_val):
+    global shared_slider
+    shared_slider = shared_val
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
 
@@ -305,12 +313,16 @@ async def user_input_loop(info_unity):
 
 
 async def main():
-    server_process = Process(target=run_server, args=())
+    # TODO: Remove, testing only
+    manager_proc = multiprocessing.Manager()
+    slider_shared = manager_proc.Value('i', 0)
+
+    server_process = Process(target=run_server, args=(slider_shared,))
     server_process.start()
 
     # Wait server to effectively run
-    await wait_for_health("http://127.0.0.1:8000/health", timeout=15.0)
-    threading.Thread(target=start_mock_slider, daemon=True).start() # TODO: Remove, testing only
+    await wait_for_health("http://127.0.0.1:8000/health", timeout=20.0)
+    threading.Thread(target=start_mock_slider, args=(slider_shared,), daemon=True).start() # TODO: Remove, testing only
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
@@ -333,25 +345,21 @@ async def main():
         await zeroconf_sensor.async_unregister_service(info_sensor)
         await zeroconf_sensor.async_close()
         # Terminate server process
-        print("Stopping WebSocket server...")
+        print("SERVER: Stopping WebSocket endpoints...")
         server_process.terminate()
         server_process.join()
-        print("Closing connection...")
+        print("SERVER: Closing connection...")
 
 
-mock_slider_value = 0
-
-def start_mock_slider():
+def start_mock_slider(shared_proxy):
     import tkinter as tk
 
     def on_move(v):
-        # v is a string, convert to int
-        global mock_slider_value
-        mock_slider_value = int(v)
+        print(f"Setting mock slider value to: {v}")
+        shared_proxy.value = int(v)
 
     root = tk.Tk()
     root.title("Mock Prediction Slider")
-    # slider from 0 to 1
     scale = tk.Scale(root,
                      from_=0, to=1,
                      orient="horizontal",

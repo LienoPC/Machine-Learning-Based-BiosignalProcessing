@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import neurokit2
 import numpy as np
 
-from Model.InnerStreamFunctions import apply_cnn_model, parse_file_no_extract, extract_signals_from_dict
+from Model.InnerStreamFunctions import apply_cnn_model, parse_file_no_extract, extract_signals_from_dict, log_to_file
 from Utility.AvroReader import read_and_plot
 
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess, plot_signal, plot_signal_nosave
@@ -128,7 +128,7 @@ async def embrace_forward_pass_plot():
 
 async def random_prediction_test():
     sampling_freq = 128
-    gsr_array = np.asarray(neurokit2.eda_simulate(180, sampling_rate=sampling_freq, scr_number=1, drift=-0.0001, noise=0.05))
+    gsr_array = np.asarray(neurokit2.eda_simulate(400, sampling_rate=sampling_freq, scr_number=7, drift=-0.0001, noise=0.05))
     eda_signals, info = neurokit2.eda_process(gsr_array, sampling_rate=sampling_freq)
     neurokit2.eda_plot(eda_signals, info)
     plt.show()

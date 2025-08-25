@@ -351,26 +351,6 @@ class SignalPreprocess():
         plt.show()
 
 
-def plot_signal(signal, filename, title=None, xlabel='Sample', ylabel='Amplitude'):
-    """
-    Plots a 1D signal and saves the plot as an image file
-
-    :param signal: Iterable of numeric values representing the signal.
-    :param filename: Path (including filename) where the plot image will be saved.
-    :param title: Title of the plot.
-    :param xlabel: Label for the x-axis.
-    :param ylabel: Label for the y-axis.
-    """
-    plt.figure()
-    plt.plot(signal)
-    if title:
-        plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
-
 def plot_signal_nosave(signal, title=None, xlabel='Sample', ylabel='Amplitude'):
     """
     Plots a 1D signal without saving
