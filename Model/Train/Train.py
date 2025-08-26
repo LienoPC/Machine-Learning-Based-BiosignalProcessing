@@ -10,7 +10,7 @@ from torchmetrics.classification import BinaryF1Score
 
 model_file_path = "./Log/Train"
 
-def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, num_epochs=100, device='cuda', lr_decay=None):
+def train_loop(model, model_name, criterion, optimizer, dataloaders, dataset_sizes, num_epochs=50, device='cuda', lr_decay=None):
     """
     Support function for model training.
 

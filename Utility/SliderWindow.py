@@ -7,7 +7,6 @@ class SliderWindow:
 
         self.shared_var = tk.DoubleVar(value=min_val)
 
-        # 3) Slider linked to that DoubleVar
         self.slider = tk.Scale(
             self.root,
             from_=min_val,
@@ -29,7 +28,6 @@ class SliderWindow:
 
         self.update_interval = update_interval
 
-        #self.root.after(self.update_interval, self.update_task)
 
     def update_task(self):
         self.root.after(self.update_interval, self.update_task)

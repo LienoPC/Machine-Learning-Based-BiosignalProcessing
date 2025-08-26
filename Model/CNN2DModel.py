@@ -18,15 +18,15 @@ from Model.Train.Train import train_loop
 
 
 # Array of all transfer learning modes to try with the associated learning rates
-transfer_modes = [('whole', 0.001), ('differential', (0.001, 0.01))]
-models = ['densenet121']
+transfer_modes = [('whole', 0.0001)]
+models = ['resnet50', 'inception_resnet_v2']
 def main_transfer_learning():
 
     ## Data loading
     img_size = 224 # The network takes 224x224x3
 
-    mean = [0.0701, 0.1922, 0.7458]
-    std = [0.2022, 0.3077, 0.2275]
+    mean = [0.1549, 0.4140, 0.7705]
+    std = [0.2953, 0.3830, 0.2990]
 
     # Load dataset
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
@@ -39,7 +39,7 @@ def main_transfer_learning():
     valid_set = SignalImageDataset(valid_img_list, valid_label_list, transform.get_transform())
 
     # Batch size
-    batch_size = 128
+    batch_size = 64
 
     # Compute sampler for class rebalancing
     train_sampler = get_weighted_random_sampler(train_label_list)
@@ -49,16 +49,15 @@ def main_transfer_learning():
     train_dataloader = DataLoader(dataset=train_set, batch_size=batch_size, sampler=train_sampler)
     valid_dataloader = DataLoader(dataset=valid_set, batch_size=batch_size, sampler=valid_sampler)
 
-
     for model in models:
         transfer_learn(model, train_dataloader, valid_dataloader)
 
 def transfer_learn(model_name, train_loader, valid_loader):
-    classes = 1 # For now, we consider only two classes: stressed and not stressed
+    classes = 1
 
     ## Define model characteristics
 
-    # Choose and existant ImageNet-Trained model to work with
+    # Choose an existent ImageNet-Trained model to work with
     base_model = timm.create_model(model_name, pretrained=True, num_classes=classes)
 
     dataloaders = {'train': train_loader, 'valid': valid_loader}
@@ -91,7 +90,7 @@ def transfer_learn(model_name, train_loader, valid_loader):
         optimizer = optim.Adam(param_groups, lr=learning_rate)
         lr_decay = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
-        model, best_threshold = train_loop(model, f"{model_name}_{mode[0]}", criterion, optimizer, dataloaders, dataset_sizes, lr_decay=lr_decay)
+        model, best_threshold = train_loop(model, f"{model_name}_{mode[0]}", criterion, optimizer, dataloaders, dataset_sizes, lr_decay=lr_decay, num_epochs=75)
         del model
         del optimizer
         del lr_decay
@@ -128,8 +127,8 @@ def get_weighted_random_sampler(label_list):
 def subdivide_dataset(csv_path, csv_name, save_path):
     df = pd.read_csv(csv_path + csv_name, header=None, names=["img", "label"])
 
-    train_val, test = train_test_split(df, test_size=0.10, stratify=df["label"], random_state=30)
-    train, val = train_test_split(train_val, test_size=0.10/0.90, stratify=train_val["label"], random_state=30)
+    train_val, test = train_test_split(df, test_size=0.10, stratify=df["label"], random_state=31)
+    train, val = train_test_split(train_val, test_size=0.10/0.90, stratify=train_val["label"], random_state=28)
     train.to_csv(f"{save_path}/train.csv", index=False)
     val.to_csv(f"{save_path}/valid.csv", index=False)
     test.to_csv(f"{save_path}/test.csv", index=False)
@@ -142,8 +141,6 @@ def get_dataset_lists(csv_path):
 
 
 def create_dataset_():
-    #subdivide_dataset("./Dataset/Data/WESAD/", "WESAD_filtered.csv", "./Dataset")
-
     train_img_list, train_label_list = get_dataset_lists("./Dataset/train.csv")
     valid_img_list, valid_label_list = get_dataset_lists("./Dataset/valid.csv")
     test_img_list, test_label_list = get_dataset_lists("./Dataset/test.csv")
@@ -158,6 +155,6 @@ def create_dataset_():
     mean, std = SignalImageDataset.compute_mean_std(entire_dataloader)
 
 
-#subdivide_dataset('./Dataset/Data/WESAD/', 'WESAD_filtered.csv', './Dataset')
+#subdivide_dataset('./Dataset/Data/', 'WESAD_redefined.csv', './Dataset')
 #create_dataset_()
-main_transfer_learning()
+#main_transfer_learning()

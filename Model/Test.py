@@ -25,12 +25,12 @@ metrics_header = ['model_name', 'loss', 'accuracy', 'precision', 'recall', 'f1-s
 
 num_classes = 1
 def test():
-    model_name = "resnet50"
-    model_path = "./Log/Saved/WESAD_MaxFreq_4_5s/resnet50_differential/resnet50_differential_100.pt"
+    model_name = "inception_resnet_v2"
+    model_path = "./Log/Saved/WESAD_Modified_MaxFreq_4_15s_Overlap_0,2_Redefined/inception_resnet_v2_whole/inception_resnet_v2_whole_75.pt"
 
     init_test_csv(model_name)
-    mean = [0.1169, 0.2582, 0.7433]
-    std = [0.2549, 0.3349, 0.2655]
+    mean = [0.1549, 0.4140, 0.7705]
+    std = [0.2953, 0.3830, 0.2990]
 
     transform = ScalogramImageTransform(224, mean=mean, std=std)
 
@@ -41,7 +41,7 @@ def test():
 
     criterion = nn.BCEWithLogitsLoss()
 
-    test_metrics = test_function(model_name, model_path, test_dataloader, criterion, threshold=False)
+    test_metrics = test_function(model_name, model_path, test_dataloader, criterion, threshold=True)
     store_test(test_metrics, model_name)
 
 
@@ -191,4 +191,4 @@ def store_pr_curve(pr_curve, path):
     plt.close()
 
 
-#test()
+test()

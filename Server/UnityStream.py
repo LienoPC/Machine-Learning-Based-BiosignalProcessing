@@ -48,9 +48,7 @@ def respond_to_discovery(service_info, timeout=20):
 
 async def stream_packet(connection_manager, packet):
     if connection_manager.connection_available():
-        #print(f"Streaming data: {packet} to VR App")
         await connection_manager.send_data(packet)
-        #print(f"Sent: {packet}")
 
 
 async def unity_stream(result, connection_manager):

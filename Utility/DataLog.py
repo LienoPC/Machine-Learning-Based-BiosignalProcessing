@@ -58,6 +58,14 @@ class DataLogger:
         self.predictions_writer.writerow([prediction, img_index, timestamp])
         self.pred_file.flush()
 
+    def add_prediction_ml(self, prediction, timestamp):
+
+        save_index = len(os.listdir(self.images_dir))
+
+        # Add row to the csv file
+        self.predictions_writer.writerow([prediction, save_index, timestamp])
+        self.pred_file.flush()
+
     def close(self):
         self.raw_file.close()
         self.pred_file.close()

@@ -8,9 +8,6 @@ pipe_name = r'\\.\pipe\biosignals'
 log_file = "../Log/Stream.txt"
 
 
-
-
-
 def read_binary_pipe(pipe):
     """ Reads a length-prefixed MessagePack message from the named pipe """
     print("Reading message length...")
@@ -26,10 +23,6 @@ def read_binary_pipe(pipe):
         return None
 
     return msgpack.unpackb(data)  # Deserialize MessagePack
-
-
-
-
 
 def parse_stream_object(obj):
     '''

@@ -1,12 +1,8 @@
 import asyncio
 import datetime
-import os
-import random
 import re
 
 import cv2
-import numpy as np
-
 import pandas as pd
 from pydantic import BaseModel
 
@@ -14,11 +10,9 @@ from scipy.signal import resample_poly
 
 from Server.UnityStream import unity_stream
 from Utility.DataLog import DataLogger
-from Utility.SliderWindow import SliderWindow
 from Model.DataPreprocess.SpectrogramImages import SignalPreprocess
 from fractions import Fraction
 import httpx
-from scipy.signal import decimate
 
 class BiosignalData(BaseModel):
     heart_rate: int
@@ -57,8 +51,6 @@ def resample_signal(x, fs_in, fs_out):
     y = resample_poly(x, up, down)
     return y
 
-
-
 def log_to_file(obj, log_file):
     log_file = open(log_file, 'a')
     timestamp = datetime.datetime.now()
@@ -67,12 +59,6 @@ def log_to_file(obj, log_file):
     log_file.write(f"GSR: {obj['gsr']}; {timestamp}\n")
     log_file.write(f"Sample Rate: {obj['sample_rate']}; {timestamp}\n")
 
-def log_window_to_file(window, log_file):
-    for line in window:
-        log_to_file(line, log_file)
-
-    log_file = open(log_file, 'a')
-    log_file.write(f"//////////////////////////////////////Window//////////////////////////////////////////") # TODO: Remove this part, only for testing purpose
 
 
 def log_to_queue(obj, dataManager):
@@ -232,6 +218,11 @@ def parse_file(filename, target_filename, num_entries=None):
     return sensor_data_list, timestamp_list
 
 def extract_signals_from_dict(sensor_data_list):
+    """
+    Gets a list of BiosignalData objects and return an array for each signal type
+    :param sensor_data_list:
+    :return:
+    """
     gsr_signal = []
     ppg_signal = []
     heart_rate_signal = []
@@ -250,8 +241,13 @@ def extract_signals_from_dict(sensor_data_list):
 
 
 async def get_sampling_freq(dataManager, window_seconds):
+    """
+    Extracts sampling frequency when stream starts
+    :param dataManager: DataManager object to access shared queue
+    :param window_seconds: dimension in seconds of the time window to process
+    :return:
+    """
     # Get sampling frequency when stream starts
-    sampling_freq = 0
     while True:
         first_line = dataManager.read_batch(1)
         if first_line != None and len(first_line) > 0:
@@ -263,37 +259,47 @@ async def get_sampling_freq(dataManager, window_seconds):
     return sampling_freq, window_samples
 
 
-async def data_processing(dataManager, websocketManager, window_seconds, overlap, stopEvent: asyncio.Event, predict_fn=None):
+async def data_processing(dataManager, websocketManager, window_seconds, overlap, model_sampling_freq, stopEvent: asyncio.Event, predict_fn=None):
     '''
-    Read the first line and get the sampling frequency. Then define the dimension of the window and starts receiving stream data
+    Function that manages all the streaming loop between signals and client application. Preprocesses data, applies model and stream results
     :param dataManager: object that contains the reference to the shared queue used by the input thread to read data from the biosensor
     :param websocketManager: object that contains all references to all opened websocket connections (outstream)
-    :param stopEvent: event called by the main thread to block the execution of
+    :param window_seconds: dimension in seconds of the window to process
+    :param overlap: percentage of overlap between windows
+    :param model_sampling_freq: sampling frequency at which the predicting model works
+    :param stopEvent: event called by the main thread to block the execution of the processing loop
+
     :return:
     '''
 
     try:
 
         if not predict_fn:
+            # Get data info + flush all data received until now
             sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
             if sampling_freq == 0:
                 raise ValueError("Data format is not valid. Cannot find sampling frequency.")
 
-        signal_preprocess = SignalPreprocess(4.0) # Create signal preprocess with 4Hz (the same frequency on which the model works)
+        # Create signal preprocess object the same frequency on which the model works
+        signal_preprocess = SignalPreprocess(model_sampling_freq)
 
-        await asyncio.sleep(window_seconds) # Wait for first window to be filled
+        # Wait for first window to be filled
+        await asyncio.sleep(window_seconds)
 
         # Create dataLog files
         data_logger = DataLogger("./ExperimentsLog/")
-        async for _ in ticker(window_seconds): # Fires prediction every time a window is available
+        # Fires prediction every time a window is available
+        async for _ in ticker(window_seconds):
             if stopEvent.is_set():
                 print("Exiting data streaming...")
                 break
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
 
 
             if predict_fn: # TODO: Remove, test only
-                await unity_stream(predict_fn(), websocketManager)
+                predict = predict_fn()
+                print(f"DATA: Sending fake predictions = {predict}")
+                await unity_stream(predict, websocketManager)
             else:
                 # Reads a window_samples of data and leaves an overlap*window_samples number of elements for the next window
                 read_list = dataManager.read_window_overlap(window_samples, overlap)
@@ -305,31 +311,46 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
                     for gsr, timestamp in zip(gsr_window, timestamp_window):
                         data_logger.add_raw(gsr, timestamp)
 
-
-                    prediction = await apply_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                    # Call prediction function
+                    prediction = await apply_cnn_model(gsr_window, sampling_freq, signal_preprocess, data_logger)
+                    # Stream prediction result to all connected clients
                     await unity_stream(prediction, websocketManager)
 
         data_logger.close()
     except Exception as e:
         raise e
 
+async def ticker(interval: float):
+    while True:
+        yield
+        await asyncio.sleep(interval)
 
 
-async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+async def apply_cnn_model(signal_window, sampling_freq, signal_preprocess, data_logger=None, scr=True):
     """
     Takes the window signal, applies preprocessing to it, and returns the prediction result
     :param signal_window:
     :param signal_preprocess:
     :param data_logger:
-    :return:
+    :return: prediction value (0,1)
     """
     try:
         timestamp = datetime.datetime.now()
-        # Resample to 4Hz
-        clean_signal = signal_preprocess.clean_epoch(signal_window, sampling_freq)
-        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
+        # Resample to correct frequency
+        resampled_signal = signal_preprocess.resample_epoch(signal_window, sampling_freq)
+        if scr:
+            # Extract SCR from signal
+            resampled_signal = signal_preprocess.preprocess_signal(resampled_signal)
+        #scr_signal = neurokit2.signal_filter(scr_signal, sampling_rate=signal_preprocess.fs, lowcut=0.0005, highcut=1.8)
+        # Compute scalogram image
+        scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(resampled_signal)
+
+
+
         # Encode image
-        success, encoded_png = cv2.imencode('.png', scalogram_image)
+        scalogram_bgr = cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR)
+
+        success, encoded_png = cv2.imencode('.png', scalogram_bgr)
         if not success:
             raise RuntimeError("Could not encode image")
 
@@ -338,13 +359,14 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
         url = "http://localhost:8000/predict"
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8000/predict",
+                url,
                 files=files,
-                timeout=2.0
+                timeout=5.0
             )
         if resp.status_code == 200:
             data = resp.json()
             if data_logger:
+                # Logs prediction result
                 data_logger.add_prediction(data['label'], scalogram_image, timestamp)
             return data['label']
         else:
@@ -353,78 +375,78 @@ async def apply_model(signal_window, sampling_freq, signal_preprocess, data_logg
         raise e
 
 
-
-
-def apply_model_mock(mean_value):
-    # ELABORATE SIGNAL WINDOW
-    classification_res = biased_bit(mean_value)
-    return classification_res
-
-
-async def ticker(interval: float):
-    while True:
-        yield
-        await asyncio.sleep(interval)
-
-def biased_bit(p: float) -> int:
+async def apply_ml_models(signal_window, sampling_freq, data_logger=None):
     """
-    Returns 1 with probability p, 0 with probability (1-p).
-    Mean = p.
+    Takes the window signal, applies preprocessing to it, and returns the prediction result using ML models
+    :param signal_window:
+    :param signal_preprocess:
+    :param data_logger:
+    :return:
     """
-    return 1 if random.random() < p else 0
+    try:
+        timestamp = datetime.datetime.now()
+        #signal_window = signal_preprocess.clean_epoch(signal_window, sampling_freq)
+        #signal_window = np.asarray(neurokit2.signal_filter(signal_window, sampling_rate=sampling_freq, lowcut=0.2, highcut=8, method='butterworth', order=8))
+        window_list = [float(x) for x in signal_window.tolist()]
+
+        payload = {
+            "window": window_list,
+            "sampling_rate": int(sampling_freq)
+        }
+        url = "http://localhost:8000/predict_ml"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                timeout=15.0
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data_logger:
+                data_logger.add_prediction_ml(data['label'], timestamp)
+            return data['label']
+        else:
+            raise Exception("Error", resp.status_code, resp.text)
+    except Exception as e:
+        raise e
+
+async def apply_spectrogram_model(signal_window, sampling_freq, signal_preprocess, data_logger=None):
+    """
+    Takes the window signal, applies preprocessing to it, and returns the prediction result using the spectrogram model
+    :param signal_window:
+    :param signal_preprocess:
+    :param data_logger:
+    :return:
+    """
+    try:
+        timestamp = datetime.datetime.now()
+        # Resample to correct frequency
+        clean_signal = signal_preprocess.resample_epoch(signal_window, sampling_freq)
+        #clean_signal = neurokit2.eda.eda_clean(signal_window, sampling_rate=4)
+        spectrogram_image = signal_preprocess.epoch_to_spectrogram_image(clean_signal, lowfreq=0.5, highfreq=12)
+
+        # Encode image
+        spectrogram_image = cv2.cvtColor(spectrogram_image, cv2.COLOR_RGB2BGR)
+        success, encoded_png = cv2.imencode('.png', spectrogram_image)
+        if not success:
+            raise RuntimeError("Could not encode image")
 
 
-def scalogram_test():
-    epoch_length = 15
-    overlap = 0.5
-    # Get sampling frequency when stream starts
-    sensor_data_list, _ = parse_file_no_extract("./Log/Stream/Stream.txt")
-    first_line = sensor_data_list[0]
-    sampling_freq = first_line.sample_rate
-    if len(sensor_data_list):
-        gsr, _, _, _ = extract_signals_from_dict(sensor_data_list)
+        files = {'file': ('scalogram.png', encoded_png.tobytes(), 'image/png')}
+        url = "http://localhost:8000/predict"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                files=files,
+                timeout=2.0
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data_logger:
+                data_logger.add_prediction(data['label'], spectrogram_image, timestamp)
+            return data['label']
+        else:
+            raise Exception("Error", resp.status_code, resp.text)
+    except Exception as e:
+        raise e
 
-        total = len(gsr)
-        signal_preprocess = SignalPreprocess(4)
-        epoch_samples = int(epoch_length * sampling_freq)
-        hop = int(epoch_samples * (1 - overlap))
-        n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
-        os.makedirs("./Log/Stream/Images", exist_ok=True)
-
-        for idx in range(n_epochs):
-            start = idx * hop
-            epoch = gsr[start:start + epoch_samples]
-            clean_signal = signal_preprocess.clean_epoch(epoch, sampling_freq)
-            scalogram_image = signal_preprocess.epoch_to_scalogram_image_pywt(clean_signal)
-            fname = "./Log/Stream/Images/" + f"epoch_{idx}.png"
-            cv2.imwrite(fname, cv2.cvtColor(scalogram_image, cv2.COLOR_RGB2BGR))
-            print(f"Saved at {fname}")
-
-
-async def dataset_forward_pass_test():
-
-    sensor_data_list, _ = parse_file_no_extract("./Model/Log/Stream/Stream.txt")
-    epoch_length = 15
-    overlap = 0.5
-    first_line = sensor_data_list[0]
-    sampling_freq = first_line.sample_rate
-    epoch_samples = int(epoch_length * sampling_freq)
-    hop = int(epoch_samples * (1 - overlap))
-    if len(sensor_data_list):
-        gsr, _, _, _, _ = extract_signals_from_dict(sensor_data_list)
-
-        total = len(gsr)
-        signal_preprocess = SignalPreprocess(4)
-        n_epochs = int(np.floor((total - epoch_samples) / hop) + 1)
-
-        for idx in range(n_epochs):
-            start = idx * hop
-            epoch = gsr[start:start + epoch_samples]
-            prediction = await apply_model(epoch,sampling_freq, signal_preprocess)
-            print(f"{idx} Prediction: {prediction} \n")
-            idx += 1
-
-
-
-
-#dataset_forward_pass_test()
