@@ -34,7 +34,7 @@ from zeroconf.asyncio import AsyncZeroconf
 from Model.Predictor import Predictor, MLPredictor, CNNPredictor
 from Server.ConnectionManager import ConnectionManager
 from Utility.DataQueueManager import DataQueueManager
-from Model.InnerStreamFunctions import log_to_queue, data_processing
+from Model.InnerStreamFunctions import data_processing
 from Server.UnityStream import stream_mockup, respond_to_discovery
 import logging
 import threading
@@ -140,7 +140,7 @@ async def sensor_in_stream(websocket: WebSocket):
 @websocketApp.websocket("/ws/ubs")
 async def model_stream(websocket: WebSocket):
     """
-    App route that manages the WebSocket connection and communication to the Unity plugin. It launches the preprocess and inference thread
+    App route that manages the WebSocket connection and communication with the Unity plugin. It launches the preprocess and inference thread
     that produces the result of the classification and sends it to the Unity plugin using the websocket manager.
     It could potentially stream to multiple Unity applications
 
@@ -152,9 +152,7 @@ async def model_stream(websocket: WebSocket):
     stop = websocketApp.state.stop_event
     stop.clear()
     try:
-        def live_mock_predict(*args, **kwargs):
-            return int(shared_slider.value) if shared_slider is not None else 0
-        await data_processing(data_manager, manager, window_seconds, overlap, 4, stop, live_mock_predict)
+        await data_processing(data_manager, manager, window_seconds, overlap, 4, stop)
     except WebSocketDisconnect:
         print("SERVER/WS/UBS: Application client disconnected, closing connection...\n")
     except Exception as exc:
@@ -238,7 +236,7 @@ async def advertise_service(service_name, stream_id, port):
     return zeroconf, info
 
 
-async def launch_process(path, cancel_token):
+async def launch_process(path, cancel_token, *args):
     """
     Starts a secondary process and prepares a secondary thread to print stdout and stderr of the process. Sets the cancel token when the process terminates
     :param path: executable file path
@@ -250,7 +248,7 @@ async def launch_process(path, cancel_token):
             line = raw.decode(errors="ignore").rstrip()
             print(f"API: BiosensorAPI-{name}> {line}")
 
-    proc = await asyncio.create_subprocess_exec(path, "", "", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    proc = await asyncio.create_subprocess_exec(path, *args, "", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     # Create terminal output tasks
     stdout_task = asyncio.create_task(read_stream(proc.stdout, "STDOUT"))
     stderr_task = asyncio.create_task(read_stream(proc.stderr, "STDERR"))
@@ -295,9 +293,7 @@ async def wait_for_health(url: str, timeout: float = 20.0, interval: float = 0.2
     raise TimeoutError(f"SERVER: Health‐check failed at {url}")
 
 
-def run_server(shared_val):
-    global shared_slider
-    shared_slider = shared_val
+def run_server():
     uvicorn.run(websocketApp, host="0.0.0.0", port=8000, ws_ping_interval=None)
 
 
@@ -314,20 +310,20 @@ async def user_input_loop(info_unity):
 
 async def main():
     # TODO: Remove, testing only
-    manager_proc = multiprocessing.Manager()
-    slider_shared = manager_proc.Value('i', 0)
+    #manager_proc = multiprocessing.Manager()
+    #slider_shared = manager_proc.Value('i', 0)
 
-    server_process = Process(target=run_server, args=(slider_shared,))
+    server_process = Process(target=run_server, args=())
     server_process.start()
 
     # Wait server to effectively run
     await wait_for_health("http://127.0.0.1:8000/health", timeout=20.0)
-    threading.Thread(target=start_mock_slider, args=(slider_shared,), daemon=True).start() # TODO: Remove, testing only
+    #threading.Thread(target=start_mock_slider, args=(slider_shared,), daemon=True).start() # TODO: Remove, testing only
     sensor_stream = asyncio.create_task(advertise_service("sensor_stream", "ss", 8000))
 
     # Start API for biosensor
-    #api_token = asyncio.Event()
-    #api_task = asyncio.create_task(launch_process(BIOSENSOR_API, api_token))
+    api_token = asyncio.Event()
+    api_task = asyncio.create_task(launch_process(BIOSENSOR_API, api_token, "COM4", "32"))
 
     #await asyncio.sleep(10)
     #await random_prediction_test()
@@ -338,8 +334,8 @@ async def main():
 
     finally:
         # Terminate biosensor api
-        #api_token.set()
-        #await api_task
+        api_token.set()
+        await api_task
         # Stop webserver services from being advertised
         zeroconf_sensor, info_sensor = await sensor_stream
         await zeroconf_sensor.async_unregister_service(info_sensor)
@@ -368,7 +364,6 @@ def start_mock_slider(shared_proxy):
                      label="Prediction (0=NotStress,1=Stress)")
     scale.pack(padx=20, pady=20)
     root.mainloop()
-
 
 
 if __name__ == "__main__":

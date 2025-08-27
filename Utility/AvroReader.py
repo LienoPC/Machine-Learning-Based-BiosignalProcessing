@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
-from Model.DataPreprocess.SpectrogramImages import plot_signal
-
 csv_path = "eda_timeseries.csv"
 SAMPLING_FREQ = 4.000406265258789
 SAMPLE_PERIOD = timedelta(seconds=1 / SAMPLING_FREQ)
@@ -96,7 +94,7 @@ def read_and_plot(file_list, time_start, time_end, path, sampling_rate, filter=T
     eda = read_csv_embrace_eda(file_list, time_start, time_end)
     if filter:
         eda = neurokit2.eda.eda_clean(eda, sampling_rate=sampling_rate)
-    plot_signal(eda, os.path.join(path, "RawSignal"))
+    #plot_signal(eda, os.path.join(path, "RawSignal"))
     return eda
 
 

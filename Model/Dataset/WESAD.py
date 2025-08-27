@@ -464,7 +464,12 @@ def build_SCR_dataset():
             labels_list.extend(labels_window)
             gsr_wrist = 100.0 / (gsr_wrist + eps)
 
-            scr_signal = neurokit2.eda_phasic(gsr_wrist, fs)
+            mean = np.mean(gsr_wrist)
+            std = np.std(gsr_wrist)
+
+            normalized = gsr_wrist - mean/ (std + eps)
+
+            scr_signal = neurokit2.eda_phasic(normalized, fs)
             scr_signal = np.asarray(scr_signal["EDA_Phasic"])
 
             img_list.extend(signal_preprocess.entire_signal_to_scalogram_images(scr_signal, epoch_length=window_length, output_folder="Data/WESAD_Dataset", additional_path="Dataset/", overlap=overlap))
@@ -612,7 +617,7 @@ def windowing_padding():
 
 
 #build_SCR_chest_dataset()
-build_dataset()
+build_SCR_dataset()
 remove_invalid_labels_from_dataset()
 redefine_invalid_labels_from_dataset()
 

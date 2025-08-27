@@ -9,7 +9,7 @@ import numpy as np
 from Model.InnerStreamFunctions import apply_cnn_model, parse_file_no_extract, extract_signals_from_dict, log_to_file
 from Utility.AvroReader import read_and_plot
 
-from Model.DataPreprocess.SpectrogramImages import SignalPreprocess, plot_signal, plot_signal_nosave
+from Model.DataPreprocess.SpectrogramImages import SignalPreprocess, plot_signal_nosave
 
 def apply_model_mock(mean_value):
     # ELABORATE SIGNAL WINDOW
@@ -84,7 +84,7 @@ async def dataset_forward_pass_test():
 
     plot_signal_nosave(predictions, title="Predicted value",
                         xlabel="Time Samples", ylabel="Prediction")
-    plot_signal(predictions, os.path.join("Model/Log/Stream/", "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
+    #plot_signal(predictions, os.path.join("Model/Log/Stream/", "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
 
 
 async def embrace_forward_pass_plot():
@@ -122,8 +122,8 @@ async def embrace_forward_pass_plot():
             predictions.append(prediction)
             idx += 1
 
-    #plot_signal_nosave(predictions, title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
-    plot_signal(predictions, os.path.join(dir_path, "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
+    plot_signal_nosave(predictions, title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
+    #plot_signal(predictions, os.path.join(dir_path, "Predictions"), title="Predicted value", xlabel="Time Samples", ylabel="Prediction")
 
 
 async def random_prediction_test():

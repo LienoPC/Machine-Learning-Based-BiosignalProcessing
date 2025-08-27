@@ -61,10 +61,6 @@ def log_to_file(obj, log_file):
 
 
 
-def log_to_queue(obj, dataManager):
-    dataManager.push_single(obj)
-
-
 def parse_file_no_extract(filename, num_entries=None):
     """
     Reads the first num_entries entries (each consisting of 4 lines) from the file,
@@ -250,11 +246,12 @@ async def get_sampling_freq(dataManager, window_seconds):
     # Get sampling frequency when stream starts
     while True:
         first_line = dataManager.read_batch(1)
-        if first_line != None and len(first_line) > 0:
+        if first_line is not None and len(first_line) > 0:
             sampling_freq = first_line[0]['sample_rate']
             break
-        # Flush the content of the streaming queue until now to not get old data
-        dataManager.clear()
+
+    # Flush the content of the streaming queue until now to not get old data
+    dataManager.clear()
     window_samples = sampling_freq * window_seconds  # Number of samples for each window
     return sampling_freq, window_samples
 
@@ -277,8 +274,12 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
         if not predict_fn:
             # Get data info + flush all data received until now
             sampling_freq, window_samples = await get_sampling_freq(dataManager, window_seconds)
+            dataManager.set_window_samples(window_samples)
             if sampling_freq == 0:
                 raise ValueError("Data format is not valid. Cannot find sampling frequency.")
+        else:
+            sampling_freq = model_sampling_freq
+            window_samples = int(window_seconds * sampling_freq)
 
         # Create signal preprocess object the same frequency on which the model works
         signal_preprocess = SignalPreprocess(model_sampling_freq)
@@ -289,12 +290,22 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
         # Create dataLog files
         data_logger = DataLogger("./ExperimentsLog/")
         # Fires prediction every time a window is available
-        async for _ in ticker(window_seconds):
-            if stopEvent.is_set():
-                print("Exiting data streaming...")
-                break
-            await asyncio.sleep(0.01)
+        while not stopEvent.is_set():
 
+            stop_task = asyncio.create_task(stopEvent.wait())
+            window_wait_task = asyncio.create_task(dataManager.wait_for_window())
+
+            done, pending = await asyncio.wait([stop_task, window_wait_task], return_when=asyncio.FIRST_COMPLETED)
+            # Verify if stop_task has returned
+            if stop_task in done:
+                for p in pending:
+                    p.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                break
+
+            stop_task.cancel()
+            await asyncio.gather(stop_task, return_exceptions=True)
 
             if predict_fn: # TODO: Remove, test only
                 predict = predict_fn()
@@ -316,7 +327,17 @@ async def data_processing(dataManager, websocketManager, window_seconds, overlap
                     # Stream prediction result to all connected clients
                     await unity_stream(prediction, websocketManager)
 
+            # Removing any leftover pending tasks
+            if pending:
+                for p in pending:
+                    p.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        print("SERVER/WS/UBS: Exiting data streaming...")
         data_logger.close()
+    except asyncio.CancelledError:
+        # Propagate cancellation exceptions
+        raise
     except Exception as e:
         raise e
 
